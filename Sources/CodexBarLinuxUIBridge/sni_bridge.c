@@ -1,16 +1,28 @@
 #include "CodexBarLinuxSNIBridge.h"
 #include <unistd.h>   /* getpid() */
 
-/* --- D-Bus introspection XML for org.kde.StatusNotifierItem --- */
+/* --- D-Bus introspection XML for org.kde.StatusNotifierItem ---
+ * Must include all properties the ubuntu-appindicators GNOME Shell extension
+ * queries. Specifically 'Menu' (object path) is required: the extension calls
+ * refreshProperty('Menu') up to three times; if it keeps failing it calls
+ * destroy() and the tray icon disappears after ~3 seconds. */
 static const gchar SNI_INTROSPECTION_XML[] =
     "<node>"
     "  <interface name='org.kde.StatusNotifierItem'>"
-    "    <property name='Category'       type='s' access='read'/>"
-    "    <property name='Id'             type='s' access='read'/>"
-    "    <property name='Title'          type='s' access='read'/>"
-    "    <property name='Status'         type='s' access='read'/>"
-    "    <property name='IconName'       type='s' access='read'/>"
-    "    <property name='IconThemePath'  type='s' access='read'/>"
+    "    <property name='Category'           type='s'       access='read'/>"
+    "    <property name='Id'                 type='s'       access='read'/>"
+    "    <property name='Title'              type='s'       access='read'/>"
+    "    <property name='Status'             type='s'       access='read'/>"
+    "    <property name='WindowId'           type='i'       access='read'/>"
+    "    <property name='IconName'           type='s'       access='read'/>"
+    "    <property name='IconThemePath'      type='s'       access='read'/>"
+    "    <property name='IconPixmap'         type='a(iiay)' access='read'/>"
+    "    <property name='OverlayIconName'    type='s'       access='read'/>"
+    "    <property name='OverlayIconPixmap'  type='a(iiay)' access='read'/>"
+    "    <property name='AttentionIconName'  type='s'       access='read'/>"
+    "    <property name='AttentionIconPixmap' type='a(iiay)' access='read'/>"
+    "    <property name='Menu'               type='o'       access='read'/>"
+    "    <property name='ItemIsMenu'         type='b'       access='read'/>"
     "    <method name='Activate'>"
     "      <arg name='x' type='i' direction='in'/>"
     "      <arg name='y' type='i' direction='in'/>"
@@ -57,12 +69,23 @@ static GVariant *sni_get_property(
     (void)conn; (void)sender; (void)object_path;
     (void)interface_name; (void)error; (void)user_data;
 
-    if (g_strcmp0(property_name, "Category")      == 0) return g_variant_new_string("ApplicationStatus");
-    if (g_strcmp0(property_name, "Id")            == 0) return g_variant_new_string("codexbar");
-    if (g_strcmp0(property_name, "Title")         == 0) return g_variant_new_string("CodexBar");
-    if (g_strcmp0(property_name, "Status")        == 0) return g_variant_new_string("Active");
-    if (g_strcmp0(property_name, "IconName")      == 0) return g_variant_new_string(g_sni.icon_name ? g_sni.icon_name : "dialog-information");
-    if (g_strcmp0(property_name, "IconThemePath") == 0) return g_variant_new_string("");
+    if (g_strcmp0(property_name, "Category")            == 0) return g_variant_new_string("ApplicationStatus");
+    if (g_strcmp0(property_name, "Id")                  == 0) return g_variant_new_string("codexbar");
+    if (g_strcmp0(property_name, "Title")               == 0) return g_variant_new_string("CodexBar");
+    if (g_strcmp0(property_name, "Status")              == 0) return g_variant_new_string("Active");
+    if (g_strcmp0(property_name, "WindowId")            == 0) return g_variant_new_int32(0);
+    if (g_strcmp0(property_name, "IconName")            == 0) return g_variant_new_string(g_sni.icon_name ? g_sni.icon_name : "dialog-information");
+    if (g_strcmp0(property_name, "IconThemePath")       == 0) return g_variant_new_string("");
+    if (g_strcmp0(property_name, "IconPixmap")          == 0) return g_variant_new_array(G_VARIANT_TYPE("(iiay)"), NULL, 0);
+    if (g_strcmp0(property_name, "OverlayIconName")     == 0) return g_variant_new_string("");
+    if (g_strcmp0(property_name, "OverlayIconPixmap")   == 0) return g_variant_new_array(G_VARIANT_TYPE("(iiay)"), NULL, 0);
+    if (g_strcmp0(property_name, "AttentionIconName")   == 0) return g_variant_new_string("");
+    if (g_strcmp0(property_name, "AttentionIconPixmap") == 0) return g_variant_new_array(G_VARIANT_TYPE("(iiay)"), NULL, 0);
+    /* Menu: any valid object path (not /NO_DBUSMENU) satisfies the extension's
+     * _checkIfReady() check. We don't implement com.canonical.dbusmenu; the
+     * DBusMenu.Client will fail silently when it can't find the interface here. */
+    if (g_strcmp0(property_name, "Menu")                == 0) return g_variant_new_object_path("/StatusNotifierItem");
+    if (g_strcmp0(property_name, "ItemIsMenu")          == 0) return g_variant_new_boolean(FALSE);
     return NULL;
 }
 

@@ -128,7 +128,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         // Register SNI tray icon (once)
         if !self.sniRegistered {
             var sniError: UnsafeMutablePointer<GError>? = nil
-            let registered = "codexbar".withCString { iconName in
+            let registered = "utilities-system-monitor".withCString { iconName in
                 codexbar_linux_sni_register(
                     iconName,
                     codexbarLinuxSNIActivateCallback,
