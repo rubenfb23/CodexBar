@@ -92,20 +92,41 @@ public struct LinuxCLIBackend: Sendable {
         var lastExitCode: Int32 = 0
 
         for provider in enabledProviders {
-            let command = try self.runProcess(
-                executablePath: cliBinaryPath,
-                arguments: Self.usageArguments(for: provider),
-                label: "CodexBar Linux refresh (\(provider.rawValue))")
-            let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !trimmed.isEmpty {
-                payloads.append(contentsOf: try self.decodePayloads(from: command.stdout))
-                stdoutParts.append(command.stdout)
+            let configuredSource = config.providerConfig(for: provider)?.source ?? .auto
+            let sourceAttempts = Self.linuxSourceAttempts(for: provider, configuredSource: configuredSource)
+
+            var chosenPayloads: [LinuxProviderPayload] = []
+            var chosenStdout = ""
+            var chosenStderr = ""
+            var chosenExitCode: Int32 = 0
+
+            for sourceMode in sourceAttempts {
+                let command = try self.runProcess(
+                    executablePath: cliBinaryPath,
+                    arguments: Self.usageArguments(for: provider, sourceMode: sourceMode),
+                    label: "CodexBar Linux refresh (\(provider.rawValue), \(sourceMode.rawValue))")
+                let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+                let decodedPayloads = trimmed.isEmpty ? [] : try self.decodePayloads(from: command.stdout)
+
+                chosenPayloads = decodedPayloads
+                chosenStdout = command.stdout
+                chosenStderr = command.stderr
+                chosenExitCode = command.exitCode
+
+                if Self.containsSuccessfulPayload(decodedPayloads, for: provider) {
+                    break
+                }
             }
-            if !command.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                stderrParts.append(command.stderr)
+
+            payloads.append(contentsOf: chosenPayloads)
+            if !chosenStdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                stdoutParts.append(chosenStdout)
             }
-            if command.exitCode != 0 {
-                lastExitCode = command.exitCode
+            if !chosenStderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                stderrParts.append(chosenStderr)
+            }
+            if chosenExitCode != 0 {
+                lastExitCode = chosenExitCode
             }
         }
 
@@ -198,7 +219,7 @@ public struct LinuxCLIBackend: Sendable {
         try Self.decodePayloadsFromCLIStdout(stdout)
     }
 
-    static func usageArguments(for provider: UsageProvider) -> [String] {
+    static func usageArguments(for provider: UsageProvider, sourceMode: ProviderSourceMode) -> [String] {
         let cliName = ProviderDescriptorRegistry.descriptor(for: provider).metadata.cliName
         return [
             "usage",
@@ -207,8 +228,30 @@ public struct LinuxCLIBackend: Sendable {
             "--pretty",
             "--status",
             "--provider", cliName,
+            "--source", sourceMode.rawValue,
             "--web-timeout", "20",
         ]
+    }
+
+    static func linuxSourceAttempts(for provider: UsageProvider, configuredSource: ProviderSourceMode) -> [ProviderSourceMode] {
+        guard configuredSource == .auto else {
+            return [configuredSource]
+        }
+
+        let supportedSources = ProviderDescriptorRegistry.descriptor(for: provider).fetchPlan.sourceModes
+        guard supportedSources.contains(.web) else {
+            return [.auto]
+        }
+
+        let orderedFallbacks: [ProviderSourceMode] = [.oauth, .api, .cli]
+        let candidates = orderedFallbacks.filter { supportedSources.contains($0) }
+        return candidates.isEmpty ? [.auto] : candidates
+    }
+
+    static func containsSuccessfulPayload(_ payloads: [LinuxProviderPayload], for provider: UsageProvider) -> Bool {
+        payloads.contains { payload in
+            payload.provider == provider.rawValue && payload.error == nil
+        }
     }
 
     static func extractJSONArraySegments(from text: String) -> [String] {

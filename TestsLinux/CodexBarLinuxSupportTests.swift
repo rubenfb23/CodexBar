@@ -223,11 +223,53 @@ struct CodexBarLinuxSupportTests {
 
     @Test
     func backendBuildsUsageArgumentsForSingleEnabledProvider() {
-        let arguments = LinuxCLIBackend.usageArguments(for: .claude)
+        let arguments = LinuxCLIBackend.usageArguments(for: .claude, sourceMode: .oauth)
 
         #expect(arguments.contains("--json-only"))
         #expect(arguments.contains("--status"))
         #expect(arguments.contains("claude"))
+        #expect(arguments.contains("--source"))
+        #expect(arguments.contains("oauth"))
         #expect(!arguments.contains("all"))
+    }
+
+    @Test
+    func backendPrefersLinuxSafeFallbackForWebCapableProviders() {
+        let codexAttempts = LinuxCLIBackend.linuxSourceAttempts(for: .codex, configuredSource: .auto)
+        let claudeAttempts = LinuxCLIBackend.linuxSourceAttempts(for: .claude, configuredSource: .auto)
+        let kiloAttempts = LinuxCLIBackend.linuxSourceAttempts(for: .kilo, configuredSource: .auto)
+
+        #expect(codexAttempts == [.oauth, .cli])
+        #expect(claudeAttempts == [.oauth, .cli])
+        #expect(kiloAttempts == [.auto])
+    }
+
+    @Test
+    func backendDetectsSuccessfulPayloadForProvider() {
+        let payloads = [
+            LinuxProviderPayload(
+                provider: "codex",
+                account: nil,
+                version: nil,
+                source: "oauth",
+                status: nil,
+                usage: UsageSnapshot(primary: nil, secondary: nil, updatedAt: Date(timeIntervalSince1970: 1_750_000_000), identity: nil),
+                credits: nil,
+                openaiDashboard: nil,
+                error: nil),
+            LinuxProviderPayload(
+                provider: "cli",
+                account: nil,
+                version: nil,
+                source: "cli",
+                status: nil,
+                usage: nil,
+                credits: nil,
+                openaiDashboard: nil,
+                error: LinuxProviderErrorPayload(code: 1, message: "Error", kind: .provider)),
+        ]
+
+        #expect(LinuxCLIBackend.containsSuccessfulPayload(payloads, for: .codex))
+        #expect(!LinuxCLIBackend.containsSuccessfulPayload(payloads, for: .claude))
     }
 }
