@@ -459,10 +459,14 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_plain_window_move(menuWindow, Int32(x), Int32(y))
 
         let menuBox = requireValue(codexbar_linux_box_new_vertical(0), "Failed to create context menu box.")
+        // Apply system menu styling (background, border, shadow)
+        "menu".withCString { codexbar_linux_widget_add_css_class(menuBox, $0) }
 
+        // Destroy (not just hide) the window to release GTK's reference — avoids leaking
+        // a new GtkWindow instance on every right-click.
         func addItem(_ title: String, action: @escaping () -> Void) {
             codexbar_linux_box_append(menuBox, self.makeButton(title: title) { _ in
-                codexbar_linux_plain_window_hide(menuWindow)
+                codexbar_linux_plain_window_destroy(menuWindow)
                 action()
             })
         }

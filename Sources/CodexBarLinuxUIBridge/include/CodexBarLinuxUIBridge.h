@@ -84,6 +84,8 @@ GtkWindow *codexbar_linux_plain_window_new(void);
 void codexbar_linux_plain_window_move(GtkWindow *window, int x, int y);
 void codexbar_linux_plain_window_present(GtkWindow *window);
 void codexbar_linux_plain_window_hide(GtkWindow *window);
+/* Destroys the window and releases GTK's reference. Use for transient windows (e.g. context menu). */
+void codexbar_linux_plain_window_destroy(GtkWindow *window);
 void codexbar_linux_window_set_decorated(GtkWindow *window, gboolean decorated);
 void codexbar_linux_window_set_skip_taskbar(GtkWindow *window, gboolean skip);
 void codexbar_linux_window_set_keep_above(GtkWindow *window, gboolean keep_above);

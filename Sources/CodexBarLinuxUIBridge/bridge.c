@@ -238,6 +238,10 @@ void codexbar_linux_plain_window_hide(GtkWindow *window) {
     gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
 }
 
+void codexbar_linux_plain_window_destroy(GtkWindow *window) {
+    gtk_window_destroy(window);
+}
+
 void codexbar_linux_plain_window_set_child(GtkWindow *window, GtkWidget *child) {
     gtk_window_set_child(window, child);
 }
