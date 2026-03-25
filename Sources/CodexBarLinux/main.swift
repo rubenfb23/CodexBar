@@ -34,6 +34,18 @@ private func codexbarLinuxActivateCallback(_ app: LinuxAppPtr?, _ userData: Unsa
     controller.handleActivate(application: app)
 }
 
+private func codexbarLinuxSNIActivateCallback(_ x: Int32, _ y: Int32, _ userData: UnsafeMutableRawPointer?) {
+    guard let userData else { return }
+    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
+    controller.togglePopup(x: Int(x), y: Int(y))
+}
+
+private func codexbarLinuxSNIContextMenuCallback(_ x: Int32, _ y: Int32, _ userData: UnsafeMutableRawPointer?) {
+    guard let userData else { return }
+    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
+    controller.showContextMenu(x: Int(x), y: Int(y))
+}
+
 private func codexbarLinuxWidgetCallback(_ widget: LinuxWidgetPtr?, _ userData: UnsafeMutableRawPointer?) {
     guard let userData else { return }
     let handler = Unmanaged<LinuxWidgetHandlerBox>.fromOpaque(userData).takeUnretainedValue()
@@ -107,37 +119,54 @@ private final class LinuxWindowController: @unchecked Sendable {
     }
 
     func handleActivate(application: LinuxAppPtr?) {
-        guard let application else { return }
-        // Build popup once
+        guard let application, let retainedPointer else { return }
+
+        // Build popup (once) — shown/hidden by tray icon clicks
         if self.popupWindow == nil {
             self.buildAndHidePopup()
         }
-        // Build and show preferences window (kept for development — Task 6 replaces this)
-        if self.preferencesWindow == nil {
-            self.buildPreferencesWindow(application: application)
+
+        // Register SNI tray icon (once)
+        if !self.sniRegistered {
+            var sniError: UnsafeMutablePointer<GError>? = nil
+            let registered = "codexbar".withCString { iconName in
+                codexbar_linux_sni_register(
+                    iconName,
+                    codexbarLinuxSNIActivateCallback,
+                    codexbarLinuxSNIContextMenuCallback,
+                    retainedPointer,
+                    &sniError)
+            }
+            if registered != 0 {
+                self.sniRegistered = true
+            } else {
+                // SNI unavailable — fall back to showing preferences window directly
+                print("CodexBar: SNI registration failed, falling back to preferences window")
+                if self.preferencesWindow == nil {
+                    self.buildPreferencesWindow(application: application)
+                }
+                if let preferencesWindow = self.preferencesWindow {
+                    codexbar_linux_window_present(preferencesWindow)
+                }
+            }
+            if let err = sniError { g_error_free(err) }
         }
-        if let preferencesWindow = self.preferencesWindow {
-            codexbar_linux_window_present(preferencesWindow)
-        }
+
         self.configureRefreshTimer()
         self.refresh()
     }
 
     func refresh() {
-        guard let subtitleLabel,
-              self.overviewBox != nil,
-              self.providersBox != nil,
-              self.generalBox != nil,
-              self.displayBox != nil,
-              self.aboutBox != nil
-        else {
-            return
-        }
+        // Only block if a refresh is already in flight
         guard !self.refreshInFlight else { return }
 
         self.preferences = self.backend.loadPreferences()
         self.refreshInFlight = true
-        self.setLabelText(subtitleLabel, "Refreshing usage from CodexBarCLI...")
+
+        // Update preferences window subtitle only when it's visible
+        if let subtitleLabel = self.subtitleLabel {
+            self.setLabelText(subtitleLabel, "Refreshing usage from CodexBarCLI...")
+        }
         let renderOptions = self.renderOptions()
         self.refreshSequence += 1
         let refreshToken = self.refreshSequence
@@ -171,15 +200,6 @@ private final class LinuxWindowController: @unchecked Sendable {
         _ result: Result<(LinuxDashboardLoadResult, CodexBarConfig), Error>,
         options: LinuxDashboardRenderOptions)
     {
-        guard let subtitleLabel,
-              let overviewBox,
-              let providersBox,
-              let generalBox,
-              let displayBox,
-              let aboutBox
-        else {
-            return
-        }
         self.refreshInFlight = false
 
         switch result {
@@ -188,41 +208,60 @@ private final class LinuxWindowController: @unchecked Sendable {
                 from: loadResult.payloads,
                 cliBinaryPath: loadResult.cliBinaryPath,
                 options: options)
-            self.renderOverview(snapshot: snapshot, exitCode: loadResult.exitCode, into: overviewBox)
-            self.renderProvidersPage(config: config, snapshot: snapshot, into: providersBox)
-            self.renderGeneralPage(into: generalBox)
-            self.renderDisplayPage(into: displayBox)
-            self.renderAboutPage(into: aboutBox)
 
-            var subtitle = LinuxDashboardPresenter.refreshSubtitle(for: snapshot)
-            if loadResult.exitCode != 0 {
-                subtitle += " | CLI exited with \(loadResult.exitCode), some providers may be unavailable."
+            // Update preferences window widgets only when the window is open
+            if let subtitleLabel = self.subtitleLabel,
+               let overviewBox = self.overviewBox,
+               let providersBox = self.providersBox,
+               let generalBox = self.generalBox,
+               let displayBox = self.displayBox,
+               let aboutBox = self.aboutBox {
+                self.renderOverview(snapshot: snapshot, exitCode: loadResult.exitCode, into: overviewBox)
+                self.renderProvidersPage(config: config, snapshot: snapshot, into: providersBox)
+                self.renderGeneralPage(into: generalBox)
+                self.renderDisplayPage(into: displayBox)
+                self.renderAboutPage(into: aboutBox)
+
+                var subtitle = LinuxDashboardPresenter.refreshSubtitle(for: snapshot)
+                if loadResult.exitCode != 0 {
+                    subtitle += " | CLI exited with \(loadResult.exitCode), some providers may be unavailable."
+                }
+                if !loadResult.cachedProviderIDs.isEmpty {
+                    let count = loadResult.cachedProviderIDs.count
+                    let noun = count == 1 ? "provider" : "providers"
+                    subtitle += " | Showing cached data for \(count) \(noun)."
+                }
+                self.setLabelText(subtitleLabel, subtitle)
             }
-            if !loadResult.cachedProviderIDs.isEmpty {
-                let count = loadResult.cachedProviderIDs.count
-                let noun = count == 1 ? "provider" : "providers"
-                subtitle += " | Showing cached data for \(count) \(noun)."
-            }
-            self.setLabelText(subtitleLabel, subtitle)
+
+            // Always update popup cards (works whether or not preferences window is open)
             self.updatePopupCards(snapshot: snapshot, options: options)
 
         case let .failure(error):
             self.renderRefreshError(error.localizedDescription)
-            codexbar_linux_box_remove_all(overviewBox)
-            codexbar_linux_box_remove_all(providersBox)
-            codexbar_linux_box_remove_all(generalBox)
-            codexbar_linux_box_remove_all(displayBox)
-            codexbar_linux_box_remove_all(aboutBox)
 
-            let errorLabel = self.makeLabel(
-                text: error.localizedDescription,
-                xalign: 0,
-                wrap: true,
-                cssClasses: ["error"])
-            codexbar_linux_box_append(overviewBox, errorLabel)
-            self.renderGeneralPage(into: generalBox)
-            self.renderDisplayPage(into: displayBox)
-            self.renderAboutPage(into: aboutBox)
+            // Update preferences window error views only when the window is open
+            if let overviewBox = self.overviewBox,
+               let providersBox = self.providersBox,
+               let generalBox = self.generalBox,
+               let displayBox = self.displayBox,
+               let aboutBox = self.aboutBox {
+                codexbar_linux_box_remove_all(overviewBox)
+                codexbar_linux_box_remove_all(providersBox)
+                codexbar_linux_box_remove_all(generalBox)
+                codexbar_linux_box_remove_all(displayBox)
+                codexbar_linux_box_remove_all(aboutBox)
+
+                let errorLabel = self.makeLabel(
+                    text: error.localizedDescription,
+                    xalign: 0,
+                    wrap: true,
+                    cssClasses: ["error"])
+                codexbar_linux_box_append(overviewBox, errorLabel)
+                self.renderGeneralPage(into: generalBox)
+                self.renderDisplayPage(into: displayBox)
+                self.renderAboutPage(into: aboutBox)
+            }
         }
     }
 
@@ -401,6 +440,44 @@ private final class LinuxWindowController: @unchecked Sendable {
         if let preferencesWindow = self.preferencesWindow {
             codexbar_linux_window_present(preferencesWindow)
         }
+    }
+
+    func togglePopup(x: Int, y: Int) {
+        guard let popupWindow else { return }
+        let popupWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(popupWindow))
+        let isVisible = codexbar_linux_widget_get_visible(popupWidget) != 0
+        if isVisible {
+            codexbar_linux_plain_window_hide(popupWindow)
+        } else {
+            codexbar_linux_plain_window_move(popupWindow, Int32(x - 280), Int32(y + 4))
+            codexbar_linux_plain_window_present(popupWindow)
+        }
+    }
+
+    func showContextMenu(x: Int, y: Int) {
+        let menuWindow = requireValue(codexbar_linux_plain_window_new(), "Failed to create context menu window.")
+        codexbar_linux_plain_window_move(menuWindow, Int32(x), Int32(y))
+
+        let menuBox = requireValue(codexbar_linux_box_new_vertical(0), "Failed to create context menu box.")
+
+        func addItem(_ title: String, action: @escaping () -> Void) {
+            codexbar_linux_box_append(menuBox, self.makeButton(title: title) { _ in
+                codexbar_linux_plain_window_hide(menuWindow)
+                action()
+            })
+        }
+
+        addItem("Show / Hide") { [weak self] in self?.togglePopup(x: x, y: y) }
+        codexbar_linux_box_append(menuBox, requireValue(codexbar_linux_separator_new(), "sep"))
+        addItem("↻  Actualizar") { [weak self] in self?.refresh() }
+        addItem("⚙  Preferencias") { [weak self] in self?.showPreferences() }
+        addItem("✕  Salir") { [weak self] in
+            guard let self, let application = self.application else { return }
+            g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
+        }
+
+        codexbar_linux_plain_window_set_child(menuWindow, menuBox)
+        codexbar_linux_plain_window_present(menuWindow)
     }
 
     // options is intentionally unused: cards are built from snapshot which is already
