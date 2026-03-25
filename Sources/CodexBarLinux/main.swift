@@ -369,6 +369,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         // --- Footer (icon buttons only) ---
         let footer = requireValue(codexbar_linux_box_new_horizontal(4), "Failed to create popup footer.")
         codexbar_linux_widget_set_margin_all(footer, 8)
+        codexbar_linux_widget_set_hexpand(footer, 1)
 
         let spacer = requireValue(codexbar_linux_box_new_horizontal(0), "Failed to create spacer.")
         codexbar_linux_widget_set_hexpand(spacer, 1)
@@ -402,7 +403,9 @@ private final class LinuxWindowController: @unchecked Sendable {
         }
     }
 
-    private func updatePopupCards(snapshot: LinuxDashboardSnapshot, options: LinuxDashboardRenderOptions) {
+    // options is intentionally unused: cards are built from snapshot which is already
+    // rendered with options applied (hidePersonalInfo, usageBarsShowUsed, etc.) upstream.
+    private func updatePopupCards(snapshot: LinuxDashboardSnapshot, options _: LinuxDashboardRenderOptions) {
         guard let popupCardsBox, let popupHeaderTimestampLabel else { return }
 
         // Update timestamp
@@ -422,12 +425,10 @@ private final class LinuxWindowController: @unchecked Sendable {
             return
         }
 
-        var isFirst = true
-        for card in snapshot.cards {
-            if !isFirst {
+        for (index, card) in snapshot.cards.enumerated() {
+            if index > 0 {
                 codexbar_linux_box_append(popupCardsBox, requireValue(codexbar_linux_separator_new(), "sep"))
             }
-            isFirst = false
             codexbar_linux_box_append(popupCardsBox, self.makePopupCard(card))
         }
     }
@@ -462,8 +463,8 @@ private final class LinuxWindowController: @unchecked Sendable {
         for bar in card.usageBars {
             let barRow = requireValue(codexbar_linux_box_new_horizontal(6), "Failed to create bar row.")
 
-            let windowLabel = self.makeLabel(text: bar.title, xalign: 1, wrap: false, cssClasses: [])
-            codexbar_linux_box_append(barRow, windowLabel)
+            let barTitleLabel = self.makeLabel(text: bar.title, xalign: 1, wrap: false, cssClasses: [])
+            codexbar_linux_box_append(barRow, barTitleLabel)
 
             let progressBar = requireValue(codexbar_linux_progress_bar_new(), "Failed to create progress bar.")
             codexbar_linux_widget_set_hexpand(progressBar, 1)
@@ -486,18 +487,18 @@ private final class LinuxWindowController: @unchecked Sendable {
         return cardBox
     }
 
-    private func makeProviderLogo(providerID: String) -> LinuxWidgetPtr {
-        // Only include providers whose SVG is actually bundled in the GResource
-        // (openai/codex and opencode slugs don't exist in Simple Icons — they fall back)
-        let resourceMap: [String: (path: String, bgColor: String)] = [
-            "claude":    ("/com/steipete/codexbar/icons/claude.svg",    "#CC785C"),
-            "cursor":    ("/com/steipete/codexbar/icons/cursor.svg",    "#1C1C1E"),
-            "copilot":   ("/com/steipete/codexbar/icons/copilot.svg",   "#24292E"),
-            "openrouter":("/com/steipete/codexbar/icons/openrouter.svg","#6467F2"),
-            "jetbrains": ("/com/steipete/codexbar/icons/jetbrains.svg", "#000000"),
-        ]
+    // Only includes providers whose SVG is actually bundled in the GResource.
+    // openai/codex and opencode slugs don't exist in Simple Icons so no SVG was downloaded.
+    private static let providerLogoMap: [String: (path: String, bgColor: String)] = [
+        "claude":    ("/com/steipete/codexbar/icons/claude.svg",    "#CC785C"),
+        "cursor":    ("/com/steipete/codexbar/icons/cursor.svg",    "#1C1C1E"),
+        "copilot":   ("/com/steipete/codexbar/icons/copilot.svg",   "#24292E"),
+        "openrouter":("/com/steipete/codexbar/icons/openrouter.svg","#6467F2"),
+        "jetbrains": ("/com/steipete/codexbar/icons/jetbrains.svg", "#000000"),
+    ]
 
-        if let entry = resourceMap[providerID] {
+    private func makeProviderLogo(providerID: String) -> LinuxWidgetPtr {
+        if let entry = Self.providerLogoMap[providerID] {
             let imageWidget = entry.path.withCString { codexbar_linux_image_from_resource($0, 12) }
             let container = requireValue(codexbar_linux_box_new_horizontal(0), "container")
             entry.bgColor.withCString { codexbar_linux_widget_set_background_color(container, $0) }
