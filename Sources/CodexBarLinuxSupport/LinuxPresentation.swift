@@ -60,10 +60,11 @@ public enum LinuxDashboardPresenter {
     public static func makeSnapshot(
         from payloads: [LinuxProviderPayload],
         cliBinaryPath: String,
-        refreshedAt: Date = Date()) -> LinuxDashboardSnapshot
+        refreshedAt: Date = Date(),
+        hidePersonalInfo: Bool = false) -> LinuxDashboardSnapshot
     {
         let cards = payloads
-            .map(Self.makeCard)
+            .map { Self.makeCard(from: $0, hidePersonalInfo: hidePersonalInfo) }
             .sorted { lhs, rhs in
                 if lhs.title == rhs.title {
                     return lhs.providerID < rhs.providerID
@@ -82,9 +83,9 @@ public enum LinuxDashboardPresenter {
         return "Refreshed \(formatter.string(from: snapshot.refreshedAt)) with \(count) \(noun) from \(snapshot.cliBinaryPath)"
     }
 
-    private static func makeCard(from payload: LinuxProviderPayload) -> LinuxProviderCard {
+    private static func makeCard(from payload: LinuxProviderPayload, hidePersonalInfo: Bool) -> LinuxProviderCard {
         let title = self.friendlyProviderName(for: payload.provider)
-        let account = self.accountLabel(for: payload)
+        let account = self.accountLabel(for: payload, hidePersonalInfo: hidePersonalInfo)
         let plan = self.planLabel(for: payload)
         let subtitle = [account, plan].compactMap { $0 }.joined(separator: " | ").nilIfEmpty ?? "No account metadata"
         let usageBars = self.usageBars(for: payload)
@@ -180,10 +181,12 @@ public enum LinuxDashboardPresenter {
         return parts.joined(separator: " | ").nilIfEmpty
     }
 
-    private static func accountLabel(for payload: LinuxProviderPayload) -> String? {
-        payload.usage?.identity?.accountEmail
+    private static func accountLabel(for payload: LinuxProviderPayload, hidePersonalInfo: Bool) -> String? {
+        let value = payload.usage?.identity?.accountEmail
             ?? payload.openaiDashboard?.signedInEmail
             ?? payload.account
+        guard hidePersonalInfo else { return value }
+        return self.redactEmail(value)
     }
 
     private static func planLabel(for payload: LinuxProviderPayload) -> String? {
@@ -228,6 +231,15 @@ public enum LinuxDashboardPresenter {
         formatter.minimumFractionDigits = 0
         formatter.numberStyle = .decimal
         return formatter.string(from: NSNumber(value: value)) ?? String(format: "%.2f", value)
+    }
+
+    private static func redactEmail(_ value: String?) -> String? {
+        guard let value, let atIndex = value.firstIndex(of: "@") else { return value }
+        let prefix = value[..<atIndex]
+        let suffix = value[atIndex...]
+        guard prefix.count > 2 else { return "***\(suffix)" }
+        let visible = prefix.prefix(2)
+        return "\(visible)***\(suffix)"
     }
 }
 

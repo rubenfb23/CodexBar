@@ -104,4 +104,54 @@ struct CodexBarLinuxSupportTests {
         #expect(snapshot.cards[0].usageBars[0].title == "Code review")
         #expect(snapshot.cards[0].footerLine?.contains("10") == true)
     }
+
+    @Test
+    func presenterRedactsEmailWhenPrivacyEnabled() {
+        let payload = LinuxProviderPayload(
+            provider: "codex",
+            account: "ruben@example.com",
+            version: nil,
+            source: "cli",
+            status: nil,
+            usage: UsageSnapshot(
+                primary: nil,
+                secondary: nil,
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                identity: ProviderIdentitySnapshot(
+                    providerID: .codex,
+                    accountEmail: "ruben@example.com",
+                    accountOrganization: nil,
+                    loginMethod: "Pro")),
+            credits: nil,
+            openaiDashboard: nil,
+            error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload],
+            cliBinaryPath: "/tmp/CodexBarCLI",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000),
+            hidePersonalInfo: true)
+
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.cards[0].subtitle.contains("ru***@example.com"))
+    }
+
+    @Test
+    func preferencesPresenterReflectsConfigOrderAndState() {
+        let config = CodexBarConfig(
+            providers: [
+                ProviderConfig(id: .claude, enabled: true, source: .api),
+                ProviderConfig(id: .codex, enabled: false, source: .cli),
+            ])
+
+        let rows = LinuxPreferencesPresenter.providerRows(config: config)
+
+        #expect(rows.count >= 2)
+        #expect(rows[0].provider == .claude)
+        #expect(rows[0].enabled == true)
+        #expect(rows[0].source == "api")
+        #expect(rows[1].provider == .codex)
+        #expect(rows[1].enabled == false)
+        #expect(rows[1].source == "cli")
+    }
 }

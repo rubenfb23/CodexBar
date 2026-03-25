@@ -33,6 +33,14 @@ void codexbar_linux_label_set_xalign(GtkWidget *label, float xalign);
 GtkWidget *codexbar_linux_button_new(const char *label);
 void codexbar_linux_button_on_clicked(GtkWidget *button, CodexBarLinuxWidgetCallback callback, void *user_data);
 
+GtkWidget *codexbar_linux_check_button_new(const char *label);
+gboolean codexbar_linux_check_button_get_active(GtkWidget *check_button);
+void codexbar_linux_check_button_set_active(GtkWidget *check_button, gboolean active);
+void codexbar_linux_check_button_on_toggled(
+    GtkWidget *check_button,
+    CodexBarLinuxWidgetCallback callback,
+    void *user_data);
+
 GtkWidget *codexbar_linux_progress_bar_new(void);
 void codexbar_linux_progress_bar_set_fraction(GtkWidget *progress_bar, double fraction);
 void codexbar_linux_progress_bar_set_text(GtkWidget *progress_bar, const char *text);
@@ -45,6 +53,15 @@ GtkWidget *codexbar_linux_frame_new(const char *label);
 void codexbar_linux_frame_set_child(GtkWidget *frame, GtkWidget *child);
 
 GtkWidget *codexbar_linux_separator_new(void);
+
+GtkWidget *codexbar_linux_stack_new(void);
+void codexbar_linux_stack_add_titled(
+    GtkWidget *stack,
+    GtkWidget *child,
+    const char *name,
+    const char *title);
+GtkWidget *codexbar_linux_stack_switcher_new(void);
+void codexbar_linux_stack_switcher_set_stack(GtkWidget *switcher, GtkWidget *stack);
 
 void codexbar_linux_widget_add_css_class(GtkWidget *widget, const char *class_name);
 void codexbar_linux_widget_set_hexpand(GtkWidget *widget, gboolean hexpand);

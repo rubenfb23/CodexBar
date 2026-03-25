@@ -85,6 +85,26 @@ void codexbar_linux_button_on_clicked(GtkWidget *button, CodexBarLinuxWidgetCall
     g_signal_connect_data(button, "clicked", G_CALLBACK(callback), user_data, NULL, 0);
 }
 
+GtkWidget *codexbar_linux_check_button_new(const char *label) {
+    return gtk_check_button_new_with_label(label);
+}
+
+gboolean codexbar_linux_check_button_get_active(GtkWidget *check_button) {
+    return gtk_check_button_get_active(GTK_CHECK_BUTTON(check_button));
+}
+
+void codexbar_linux_check_button_set_active(GtkWidget *check_button, gboolean active) {
+    gtk_check_button_set_active(GTK_CHECK_BUTTON(check_button), active);
+}
+
+void codexbar_linux_check_button_on_toggled(
+    GtkWidget *check_button,
+    CodexBarLinuxWidgetCallback callback,
+    void *user_data)
+{
+    g_signal_connect_data(check_button, "toggled", G_CALLBACK(callback), user_data, NULL, 0);
+}
+
 GtkWidget *codexbar_linux_progress_bar_new(void) {
     return gtk_progress_bar_new();
 }
@@ -119,6 +139,27 @@ void codexbar_linux_frame_set_child(GtkWidget *frame, GtkWidget *child) {
 
 GtkWidget *codexbar_linux_separator_new(void) {
     return gtk_separator_new(GTK_ORIENTATION_HORIZONTAL);
+}
+
+GtkWidget *codexbar_linux_stack_new(void) {
+    return gtk_stack_new();
+}
+
+void codexbar_linux_stack_add_titled(
+    GtkWidget *stack,
+    GtkWidget *child,
+    const char *name,
+    const char *title)
+{
+    gtk_stack_add_titled(GTK_STACK(stack), child, name, title);
+}
+
+GtkWidget *codexbar_linux_stack_switcher_new(void) {
+    return gtk_stack_switcher_new();
+}
+
+void codexbar_linux_stack_switcher_set_stack(GtkWidget *switcher, GtkWidget *stack) {
+    gtk_stack_switcher_set_stack(GTK_STACK_SWITCHER(switcher), GTK_STACK(stack));
 }
 
 void codexbar_linux_widget_add_css_class(GtkWidget *widget, const char *class_name) {

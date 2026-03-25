@@ -55,7 +55,9 @@ CODEXBAR_LINUX_CLI_BINARY="$(pwd)/.build/release/CodexBarCLI" .build/release/Cod
 ## Current scope
 
 - native GNOME/libadwaita window
-- provider cards rendered from `codexbar usage --format json`
+- overview page with provider cards rendered from `codexbar usage --format json`
+- providers page that writes provider enablement back to `~/.codexbar/config.json`
+- general/display/about pages with Linux-side persisted preferences
 - manual refresh
 - open config button via `xdg-open`
 

@@ -1,4 +1,5 @@
 #if os(Linux)
+import CodexBarCore
 import CodexBarLinuxSupport
 import CodexBarLinuxUIBridge
 import Foundation
@@ -21,25 +22,37 @@ private func codexbarLinuxActivateCallback(_ app: OpaquePointer?, _ userData: Un
     controller.handleActivate(application: app)
 }
 
-private func codexbarLinuxRefreshCallback(_ widget: OpaquePointer?, _ userData: UnsafeMutableRawPointer?) {
+private func codexbarLinuxWidgetCallback(_ widget: OpaquePointer?, _ userData: UnsafeMutableRawPointer?) {
     guard let userData else { return }
-    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
-    controller.refresh()
+    let handler = Unmanaged<LinuxWidgetHandlerBox>.fromOpaque(userData).takeUnretainedValue()
+    handler.handle(widget)
 }
 
-private func codexbarLinuxOpenConfigCallback(_ widget: OpaquePointer?, _ userData: UnsafeMutableRawPointer?) {
-    guard let userData else { return }
-    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
-    controller.openConfig()
+private final class LinuxWidgetHandlerBox {
+    let handle: (OpaquePointer?) -> Void
+
+    init(handle: @escaping (OpaquePointer?) -> Void) {
+        self.handle = handle
+    }
 }
 
 private final class LinuxWindowController {
     private let backend = LinuxCLIBackend()
+    private var preferences: LinuxPreferences
     private var application: OpaquePointer?
     private var window: OpaquePointer?
     private var subtitleLabel: OpaquePointer?
-    private var cardsBox: OpaquePointer?
+    private var overviewBox: OpaquePointer?
+    private var providersBox: OpaquePointer?
+    private var generalBox: OpaquePointer?
+    private var displayBox: OpaquePointer?
+    private var aboutBox: OpaquePointer?
     private var retainedPointer: UnsafeMutableRawPointer?
+    private var retainedHandlers: [LinuxWidgetHandlerBox] = []
+
+    init() {
+        self.preferences = self.backend.loadPreferences()
+    }
 
     func run() {
         self.retainedPointer = Unmanaged.passRetained(self).toOpaque()
@@ -64,28 +77,52 @@ private final class LinuxWindowController {
     }
 
     func refresh() {
-        guard let subtitleLabel, let cardsBox else { return }
+        guard let subtitleLabel, let overviewBox, let providersBox, let generalBox, let displayBox, let aboutBox else {
+            return
+        }
+
+        self.preferences = self.backend.loadPreferences()
         self.setLabelText(subtitleLabel, "Refreshing usage from CodexBarCLI...")
 
         do {
             let loadResult = try self.backend.fetchUsagePayloads()
+            let config = try self.backend.loadConfig()
             let snapshot = LinuxDashboardPresenter.makeSnapshot(
                 from: loadResult.payloads,
-                cliBinaryPath: loadResult.cliBinaryPath)
-            self.render(snapshot: snapshot, exitCode: loadResult.exitCode)
+                cliBinaryPath: loadResult.cliBinaryPath,
+                hidePersonalInfo: self.preferences.hidePersonalInfo)
+            self.renderOverview(snapshot: snapshot, exitCode: loadResult.exitCode, into: overviewBox)
+            self.renderProvidersPage(config: config, snapshot: snapshot, into: providersBox)
+            self.renderGeneralPage(into: generalBox)
+            self.renderDisplayPage(into: displayBox)
+            self.renderAboutPage(into: aboutBox)
+
+            var subtitle = LinuxDashboardPresenter.refreshSubtitle(for: snapshot)
+            if loadResult.exitCode != 0 {
+                subtitle += " | CLI exited with \(loadResult.exitCode), some providers may be unavailable."
+            }
+            self.setLabelText(subtitleLabel, subtitle)
         } catch {
             self.renderRefreshError(error.localizedDescription)
-            codexbar_linux_box_remove_all(cardsBox)
-            let label = self.makeLabel(
+            codexbar_linux_box_remove_all(overviewBox)
+            codexbar_linux_box_remove_all(providersBox)
+            codexbar_linux_box_remove_all(generalBox)
+            codexbar_linux_box_remove_all(displayBox)
+            codexbar_linux_box_remove_all(aboutBox)
+
+            let errorLabel = self.makeLabel(
                 text: error.localizedDescription,
                 xalign: 0,
                 wrap: true,
                 cssClasses: ["error"])
-            codexbar_linux_box_append(cardsBox, label)
+            codexbar_linux_box_append(overviewBox, errorLabel)
+            self.renderGeneralPage(into: generalBox)
+            self.renderDisplayPage(into: displayBox)
+            self.renderAboutPage(into: aboutBox)
         }
     }
 
-    func openConfig() {
+    private func openConfig() {
         do {
             let fileURL = try self.backend.openConfigInDefaultApp()
             if let subtitleLabel = self.subtitleLabel {
@@ -96,11 +133,40 @@ private final class LinuxWindowController {
         }
     }
 
+    private func setRefreshFrequency(_ frequency: LinuxRefreshFrequency) {
+        self.preferences.refreshFrequency = frequency
+        do {
+            try self.backend.savePreferences(self.preferences)
+        } catch {
+            self.renderRefreshError(error.localizedDescription)
+        }
+        self.refresh()
+    }
+
+    private func setPreference(_ update: (inout LinuxPreferences) -> Void) {
+        update(&self.preferences)
+        do {
+            try self.backend.savePreferences(self.preferences)
+        } catch {
+            self.renderRefreshError(error.localizedDescription)
+        }
+        self.refresh()
+    }
+
+    private func setProviderEnabled(_ provider: UsageProvider, enabled: Bool) {
+        do {
+            try self.backend.setProviderEnabled(provider, enabled: enabled)
+        } catch {
+            self.renderRefreshError(error.localizedDescription)
+        }
+        self.refresh()
+    }
+
     private func buildWindow(application: OpaquePointer) {
         let window = codexbar_linux_window_new(application)
         self.window = window
         "CodexBar Ubuntu".withCString { codexbar_linux_window_set_title(window, $0) }
-        codexbar_linux_window_set_default_size(window, 960, 720)
+        codexbar_linux_window_set_default_size(window, 1080, 780)
 
         let root = codexbar_linux_box_new_vertical(16)
         codexbar_linux_widget_set_margin_all(root, 24)
@@ -115,67 +181,310 @@ private final class LinuxWindowController {
         codexbar_linux_box_append(root, titleLabel)
 
         let subtitleLabel = self.makeLabel(
-            text: "Native Ubuntu window backed by CodexBarCLI JSON.",
+            text: "Native Ubuntu port shaped after the macOS app.",
             xalign: 0,
             wrap: true,
             cssClasses: ["dim-label"])
         self.subtitleLabel = subtitleLabel
         codexbar_linux_box_append(root, subtitleLabel)
 
-        let buttonRow = codexbar_linux_box_new_horizontal(12)
-        let refreshButton = "Refresh".withCString { codexbar_linux_button_new($0) }
-        let configButton = "Open Config".withCString { codexbar_linux_button_new($0) }
-        if let retainedPointer = self.retainedPointer {
-            codexbar_linux_button_on_clicked(refreshButton, codexbarLinuxRefreshCallback, retainedPointer)
-            codexbar_linux_button_on_clicked(configButton, codexbarLinuxOpenConfigCallback, retainedPointer)
-        }
-        codexbar_linux_box_append(buttonRow, refreshButton)
-        codexbar_linux_box_append(buttonRow, configButton)
-        codexbar_linux_box_append(root, buttonRow)
+        let toolbar = codexbar_linux_box_new_horizontal(12)
+        codexbar_linux_box_append(toolbar, self.makeButton(title: "Refresh") { [weak self] _ in
+            self?.refresh()
+        })
+        codexbar_linux_box_append(toolbar, self.makeButton(title: "Open Config") { [weak self] _ in
+            self?.openConfig()
+        })
+        codexbar_linux_box_append(root, toolbar)
 
-        let separator = codexbar_linux_separator_new()
-        codexbar_linux_box_append(root, separator)
+        let stack = codexbar_linux_stack_new()
+        let switcher = codexbar_linux_stack_switcher_new()
+        codexbar_linux_stack_switcher_set_stack(switcher, stack)
+        codexbar_linux_box_append(root, switcher)
 
-        let scrolled = codexbar_linux_scrolled_window_new()
-        codexbar_linux_widget_set_hexpand(scrolled, 1)
-        codexbar_linux_widget_set_vexpand(scrolled, 1)
-        let cardsBox = codexbar_linux_box_new_vertical(16)
-        self.cardsBox = cardsBox
-        codexbar_linux_scrolled_window_set_child(scrolled, cardsBox)
-        codexbar_linux_box_append(root, scrolled)
+        let overviewPage = self.makePageContainer()
+        let providersPage = self.makePageContainer()
+        let generalPage = self.makePageContainer()
+        let displayPage = self.makePageContainer()
+        let aboutPage = self.makePageContainer()
+
+        self.overviewBox = overviewPage
+        self.providersBox = providersPage
+        self.generalBox = generalPage
+        self.displayBox = displayPage
+        self.aboutBox = aboutPage
+
+        self.addPage(to: stack, name: "overview", title: "Overview", content: overviewPage)
+        self.addPage(to: stack, name: "providers", title: "Providers", content: providersPage)
+        self.addPage(to: stack, name: "general", title: "General", content: generalPage)
+        self.addPage(to: stack, name: "display", title: "Display", content: displayPage)
+        self.addPage(to: stack, name: "about", title: "About", content: aboutPage)
+
+        codexbar_linux_widget_set_hexpand(stack, 1)
+        codexbar_linux_widget_set_vexpand(stack, 1)
+        codexbar_linux_box_append(root, stack)
 
         codexbar_linux_window_set_content(window, root)
     }
 
-    private func render(snapshot: LinuxDashboardSnapshot, exitCode: Int32) {
-        guard let subtitleLabel, let cardsBox else { return }
-
-        var subtitle = LinuxDashboardPresenter.refreshSubtitle(for: snapshot)
-        if exitCode != 0 {
-            subtitle += " | CLI exited with \(exitCode), some providers may be unavailable."
-        }
-        self.setLabelText(subtitleLabel, subtitle)
-
-        codexbar_linux_box_remove_all(cardsBox)
+    private func renderOverview(snapshot: LinuxDashboardSnapshot, exitCode: Int32, into box: OpaquePointer) {
+        codexbar_linux_box_remove_all(box)
         if snapshot.cards.isEmpty {
             let emptyLabel = self.makeLabel(
                 text: "CodexBarCLI returned no enabled providers.",
                 xalign: 0,
                 wrap: true,
                 cssClasses: ["dim-label"])
-            codexbar_linux_box_append(cardsBox, emptyLabel)
+            codexbar_linux_box_append(box, emptyLabel)
             return
         }
 
         for card in snapshot.cards {
             let widget = self.makeCardWidget(card)
-            codexbar_linux_box_append(cardsBox, widget)
+            codexbar_linux_box_append(box, widget)
         }
+
+        if exitCode != 0 {
+            let footer = self.makeLabel(
+                text: "The refresh completed with CLI errors. Some cards may be partial.",
+                xalign: 0,
+                wrap: true,
+                cssClasses: ["dim-label"])
+            codexbar_linux_box_append(box, footer)
+        }
+    }
+
+    private func renderProvidersPage(config: CodexBarConfig, snapshot: LinuxDashboardSnapshot, into box: OpaquePointer) {
+        codexbar_linux_box_remove_all(box)
+
+        let intro = self.makeLabel(
+            text: "Providers mirrors the macOS Providers pane: toggle providers and inspect source/config status.",
+            xalign: 0,
+            wrap: true,
+            cssClasses: ["dim-label"])
+        codexbar_linux_box_append(box, intro)
+
+        let cardsByProvider = Dictionary(uniqueKeysWithValues: snapshot.cards.map { ($0.providerID, $0) })
+        let rows = LinuxPreferencesPresenter.providerRows(config: config)
+        for row in rows {
+            let frame = row.displayName.withCString { codexbar_linux_frame_new($0) }
+            let content = codexbar_linux_box_new_vertical(8)
+            codexbar_linux_widget_set_margin_all(content, 16)
+
+            let toggle = self.makeCheckButton(title: "Enabled", active: row.enabled) { [weak self] widget in
+                guard let self else { return }
+                let active = codexbar_linux_check_button_get_active(widget) != 0
+                self.setProviderEnabled(row.provider, enabled: active)
+            }
+            codexbar_linux_box_append(content, toggle)
+
+            let subtitle = self.makeLabel(text: row.subtitle, xalign: 0, wrap: true, cssClasses: ["dim-label"])
+            codexbar_linux_box_append(content, subtitle)
+
+            let source = self.makeLabel(
+                text: "Source mode: \(row.source)",
+                xalign: 0,
+                wrap: false,
+                cssClasses: [])
+            codexbar_linux_box_append(content, source)
+
+            if let card = cardsByProvider[row.provider.rawValue] {
+                let status = self.makeLabel(text: card.statusLine, xalign: 0, wrap: true, cssClasses: [])
+                codexbar_linux_box_append(content, status)
+                if let footerLine = card.footerLine {
+                    let footer = self.makeLabel(text: footerLine, xalign: 0, wrap: true, cssClasses: ["dim-label"])
+                    codexbar_linux_box_append(content, footer)
+                }
+            } else {
+                let noUsage = self.makeLabel(
+                    text: "No usage snapshot rendered in the current refresh.",
+                    xalign: 0,
+                    wrap: true,
+                    cssClasses: ["dim-label"])
+                codexbar_linux_box_append(content, noUsage)
+            }
+
+            codexbar_linux_frame_set_child(frame, content)
+            codexbar_linux_box_append(box, frame)
+        }
+    }
+
+    private func renderGeneralPage(into box: OpaquePointer) {
+        codexbar_linux_box_remove_all(box)
+
+        codexbar_linux_box_append(box, self.makeSectionTitle("System"))
+        codexbar_linux_box_append(box, self.makeLabel(
+            text: "Ubuntu launch-at-login and notifications will be added separately. This page already persists Linux app preferences.",
+            xalign: 0,
+            wrap: true,
+            cssClasses: ["dim-label"]))
+
+        codexbar_linux_box_append(box, self.makeSeparator())
+        codexbar_linux_box_append(box, self.makeSectionTitle("Usage"))
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Show cost summary",
+            subtitle: "Matches the macOS General pane toggle for local token cost usage.",
+            active: self.preferences.costUsageEnabled)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.costUsageEnabled = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Check provider status",
+            subtitle: "Poll provider status pages during refresh.",
+            active: self.preferences.statusChecksEnabled)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.statusChecksEnabled = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Session quota notifications",
+            subtitle: "Persisted now; Linux desktop notifications come later.",
+            active: self.preferences.sessionQuotaNotificationsEnabled)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.sessionQuotaNotificationsEnabled = active }
+        })
+
+        codexbar_linux_box_append(box, self.makeSeparator())
+        codexbar_linux_box_append(box, self.makeSectionTitle("Automation"))
+        let cadenceInfo = self.makeLabel(
+            text: "Refresh cadence: \(self.preferences.refreshFrequency.label)",
+            xalign: 0,
+            wrap: false,
+            cssClasses: [])
+        codexbar_linux_box_append(box, cadenceInfo)
+
+        let cadenceButtons = codexbar_linux_box_new_horizontal(8)
+        for frequency in LinuxRefreshFrequency.allCases {
+            codexbar_linux_box_append(cadenceButtons, self.makeButton(title: frequency.label) { [weak self] _ in
+                self?.setRefreshFrequency(frequency)
+            })
+        }
+        codexbar_linux_box_append(box, cadenceButtons)
+    }
+
+    private func renderDisplayPage(into box: OpaquePointer) {
+        codexbar_linux_box_remove_all(box)
+
+        codexbar_linux_box_append(box, self.makeSectionTitle("Menu content"))
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Show usage as used",
+            subtitle: "Progress bars fill as quota is consumed.",
+            active: self.preferences.usageBarsShowUsed)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.usageBarsShowUsed = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Show reset time as clock",
+            subtitle: "Persisted now; absolute reset rendering will follow in the cards.",
+            active: self.preferences.resetTimesShowAbsolute)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.resetTimesShowAbsolute = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Show credits + extra usage",
+            subtitle: "Keep optional credits sections visible when the Linux UI grows.",
+            active: self.preferences.showOptionalCreditsAndExtraUsage)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.showOptionalCreditsAndExtraUsage = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Hide personal info",
+            subtitle: "Redacts account emails in the overview and providers pages.",
+            active: self.preferences.hidePersonalInfo)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.hidePersonalInfo = active }
+        })
+
+        codexbar_linux_box_append(box, self.makeSeparator())
+        codexbar_linux_box_append(box, self.makeSectionTitle("Merged view"))
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Merge icons",
+            subtitle: "Kept for parity with macOS preferences; tray behaviour will use this later.",
+            active: self.preferences.mergeIcons)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.mergeIcons = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Switcher shows icons",
+            subtitle: "Stored now for future tray/menu switcher work.",
+            active: self.preferences.switcherShowsIcons)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.switcherShowsIcons = active }
+        })
+        codexbar_linux_box_append(box, self.makeCheckButtonRow(
+            title: "Show most-used provider",
+            subtitle: "Stored now for future merged/tray routing.",
+            active: self.preferences.menuBarShowsHighestUsage)
+        { [weak self] widget in
+            guard let self else { return }
+            let active = codexbar_linux_check_button_get_active(widget) != 0
+            self.setPreference { $0.menuBarShowsHighestUsage = active }
+        })
+    }
+
+    private func renderAboutPage(into box: OpaquePointer) {
+        codexbar_linux_box_remove_all(box)
+        codexbar_linux_box_append(box, self.makeSectionTitle("About"))
+        for line in LinuxPreferencesPresenter.aboutLines() {
+            let label = self.makeLabel(text: line, xalign: 0, wrap: true, cssClasses: [])
+            codexbar_linux_box_append(box, label)
+        }
+
+        let paths = self.makeLabel(
+            text: "Config: \(CodexBarConfigStore.defaultURL().path)\nLinux prefs: \(LinuxPreferencesStore.defaultURL().path)",
+            xalign: 0,
+            wrap: true,
+            cssClasses: ["dim-label"])
+        codexbar_linux_box_append(box, paths)
     }
 
     private func renderRefreshError(_ message: String) {
         guard let subtitleLabel else { return }
         self.setLabelText(subtitleLabel, "Refresh failed: \(message)")
+    }
+
+    private func addPage(to stack: OpaquePointer, name: String, title: String, content: OpaquePointer) {
+        let scroll = codexbar_linux_scrolled_window_new()
+        codexbar_linux_widget_set_hexpand(scroll, 1)
+        codexbar_linux_widget_set_vexpand(scroll, 1)
+        codexbar_linux_scrolled_window_set_child(scroll, content)
+        name.withCString { pageName in
+            title.withCString { pageTitle in
+                codexbar_linux_stack_add_titled(stack, scroll, pageName, pageTitle)
+            }
+        }
+    }
+
+    private func makePageContainer() -> OpaquePointer {
+        let box = codexbar_linux_box_new_vertical(16)
+        codexbar_linux_widget_set_margin_all(box, 12)
+        codexbar_linux_widget_set_hexpand(box, 1)
+        return box
+    }
+
+    private func makeSectionTitle(_ text: String) -> OpaquePointer {
+        self.makeLabel(text: text, xalign: 0, wrap: false, cssClasses: ["heading"])
+    }
+
+    private func makeSeparator() -> OpaquePointer {
+        codexbar_linux_separator_new()
     }
 
     private func makeCardWidget(_ card: LinuxProviderCard) -> OpaquePointer {
@@ -220,6 +529,47 @@ private final class LinuxWindowController {
 
         codexbar_linux_frame_set_child(frame, content)
         return frame
+    }
+
+    private func makeCheckButtonRow(
+        title: String,
+        subtitle: String,
+        active: Bool,
+        onToggle: @escaping (OpaquePointer) -> Void) -> OpaquePointer
+    {
+        let row = codexbar_linux_box_new_vertical(4)
+        let toggle = self.makeCheckButton(title: title, active: active, onToggle: onToggle)
+        codexbar_linux_box_append(row, toggle)
+        let subtitleLabel = self.makeLabel(text: subtitle, xalign: 0, wrap: true, cssClasses: ["dim-label"])
+        codexbar_linux_box_append(row, subtitleLabel)
+        return row
+    }
+
+    private func makeCheckButton(
+        title: String,
+        active: Bool,
+        onToggle: @escaping (OpaquePointer) -> Void) -> OpaquePointer
+    {
+        let button = title.withCString { codexbar_linux_check_button_new($0) }
+        codexbar_linux_check_button_set_active(button, active ? 1 : 0)
+        let handler = LinuxWidgetHandlerBox { widget in
+            guard let widget else { return }
+            onToggle(widget)
+        }
+        self.retainedHandlers.append(handler)
+        codexbar_linux_check_button_on_toggled(
+            button,
+            codexbarLinuxWidgetCallback,
+            Unmanaged.passUnretained(handler).toOpaque())
+        return button
+    }
+
+    private func makeButton(title: String, onClick: @escaping (OpaquePointer?) -> Void) -> OpaquePointer {
+        let button = title.withCString { codexbar_linux_button_new($0) }
+        let handler = LinuxWidgetHandlerBox(handle: onClick)
+        self.retainedHandlers.append(handler)
+        codexbar_linux_button_on_clicked(button, codexbarLinuxWidgetCallback, Unmanaged.passUnretained(handler).toOpaque())
+        return button
     }
 
     private func makeLabel(text: String, xalign: Float, wrap: Bool, cssClasses: [String]) -> OpaquePointer {

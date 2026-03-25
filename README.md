@@ -25,7 +25,7 @@ Or download `CodexBarCLI-v<tag>-linux-<arch>.tar.gz` from GitHub Releases.
 Linux support via Omarchy: community Waybar module and TUI, driven by the `codexbar` executable.
 
 ### Ubuntu native window (from source)
-The repo also includes a native Ubuntu app target, `CodexBarLinux`, built with GTK4/libadwaita and backed by `CodexBarCLI` JSON.
+The repo also includes a native Ubuntu app target, `CodexBarLinux`, built with GTK4/libadwaita and backed by `CodexBarCLI` JSON. It now includes overview/providers/general/display/about pages so the structure starts matching the macOS app instead of just showing one dashboard view.
 
 ```bash
 ./bin/install-codexbar-ubuntu-native.sh

@@ -59,9 +59,17 @@ public enum LinuxCLIBackendError: LocalizedError {
 
 public struct LinuxCLIBackend: Sendable {
     public let environment: [String: String]
+    public let configStore: CodexBarConfigStore
+    public let preferencesStore: LinuxPreferencesStore
 
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    public init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        configStore: CodexBarConfigStore = CodexBarConfigStore(),
+        preferencesStore: LinuxPreferencesStore = LinuxPreferencesStore())
+    {
         self.environment = environment
+        self.configStore = configStore
+        self.preferencesStore = preferencesStore
     }
 
     public func fetchUsagePayloads() throws -> LinuxDashboardLoadResult {
@@ -116,9 +124,28 @@ public struct LinuxCLIBackend: Sendable {
     }
 
     public func ensureConfigFile() throws -> URL {
-        let store = CodexBarConfigStore()
-        _ = try store.loadOrCreateDefault()
-        return store.fileURL
+        _ = try self.configStore.loadOrCreateDefault()
+        return self.configStore.fileURL
+    }
+
+    public func loadConfig() throws -> CodexBarConfig {
+        try self.configStore.loadOrCreateDefault()
+    }
+
+    public func setProviderEnabled(_ provider: UsageProvider, enabled: Bool) throws {
+        var config = try self.loadConfig()
+        var providerConfig = config.providerConfig(for: provider) ?? ProviderConfig(id: provider)
+        providerConfig.enabled = enabled
+        config.setProviderConfig(providerConfig)
+        try self.configStore.save(config.normalized())
+    }
+
+    public func loadPreferences() -> LinuxPreferences {
+        self.preferencesStore.load()
+    }
+
+    public func savePreferences(_ preferences: LinuxPreferences) throws {
+        try self.preferencesStore.save(preferences)
     }
 
     private func decodePayloads(from stdout: String) throws -> [LinuxProviderPayload] {
