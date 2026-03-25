@@ -4,7 +4,6 @@ import CodexBarLinuxSupport
 import CodexBarLinuxUIBridge
 import Dispatch
 import Foundation
-import Glibc
 
 private let appID = "com.steipete.codexbar.linux"
 private typealias LinuxAppPtr = UnsafeMutablePointer<AdwApplication>
@@ -143,7 +142,6 @@ private final class LinuxWindowController: @unchecked Sendable {
                 codexbar_linux_application_hold(application)
             } else {
                 // SNI unavailable — fall back to showing preferences window directly
-                print("CodexBar: SNI registration failed, falling back to preferences window")
                 if self.preferencesWindow == nil {
                     self.buildPreferencesWindow(application: application)
                 }
