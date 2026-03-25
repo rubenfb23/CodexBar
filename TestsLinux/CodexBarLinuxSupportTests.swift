@@ -202,6 +202,47 @@ struct CodexBarLinuxSupportTests {
     }
 
     @Test
+    func presenterUsesRemainingModeAndAbsoluteResetStyle() {
+        let payload = LinuxProviderPayload(
+            provider: "codex",
+            account: nil,
+            version: nil,
+            source: "oauth",
+            status: nil,
+            usage: UsageSnapshot(
+                primary: RateWindow(
+                    usedPercent: 55,
+                    windowMinutes: 300,
+                    resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    resetDescription: nil),
+                secondary: nil,
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                identity: nil),
+            credits: CreditsSnapshot(
+                remaining: 12,
+                events: [],
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000)),
+            openaiDashboard: nil,
+            error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload],
+            cliBinaryPath: "/tmp/CodexBarCLI",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000),
+            options: LinuxDashboardRenderOptions(
+                hidePersonalInfo: false,
+                usageBarsShowUsed: false,
+                resetTimeDisplayStyle: .absolute,
+                showOptionalCreditsAndExtraUsage: false))
+
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.cards[0].usageBars[0].fractionFilled == 0.45)
+        #expect(snapshot.cards[0].usageBars[0].detail.contains("% left"))
+        #expect(snapshot.cards[0].usageBars[0].detail.contains("Resets"))
+        #expect(snapshot.cards[0].footerLine?.contains("Credits") == false)
+    }
+
+    @Test
     func preferencesPresenterReflectsConfigOrderAndState() {
         let config = CodexBarConfig(
             providers: [
@@ -336,5 +377,13 @@ struct CodexBarLinuxSupportTests {
 
         #expect(LinuxCLIBackend.containsSuccessfulPayload(payloads, for: .codex))
         #expect(!LinuxCLIBackend.containsSuccessfulPayload(payloads, for: .claude))
+    }
+
+    @Test
+    func refreshFrequencyExposesTimerSeconds() {
+        #expect(LinuxRefreshFrequency.manual.seconds == nil)
+        #expect(LinuxRefreshFrequency.oneMinute.seconds == 60)
+        #expect(LinuxRefreshFrequency.fiveMinutes.seconds == 300)
+        #expect(LinuxRefreshFrequency.thirtyMinutes.seconds == 1_800)
     }
 }

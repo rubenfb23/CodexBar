@@ -193,6 +193,20 @@ void codexbar_linux_widget_set_margin_all(GtkWidget *widget, int margin) {
     gtk_widget_set_margin_end(widget, margin);
 }
 
+guint codexbar_linux_timeout_add_seconds(
+    guint interval,
+    CodexBarLinuxTimeoutCallback callback,
+    void *user_data)
+{
+    return g_timeout_add_seconds(interval, callback, user_data);
+}
+
+void codexbar_linux_source_remove(guint source_id) {
+    if (source_id != 0) {
+        g_source_remove(source_id);
+    }
+}
+
 void codexbar_linux_main_context_invoke(
     CodexBarLinuxMainThreadCallback callback,
     void *user_data)

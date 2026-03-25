@@ -13,6 +13,25 @@ public struct LinuxDashboardSnapshot: Sendable {
     }
 }
 
+public struct LinuxDashboardRenderOptions: Sendable {
+    public let hidePersonalInfo: Bool
+    public let usageBarsShowUsed: Bool
+    public let resetTimeDisplayStyle: ResetTimeDisplayStyle
+    public let showOptionalCreditsAndExtraUsage: Bool
+
+    public init(
+        hidePersonalInfo: Bool = false,
+        usageBarsShowUsed: Bool = false,
+        resetTimeDisplayStyle: ResetTimeDisplayStyle = .countdown,
+        showOptionalCreditsAndExtraUsage: Bool = true)
+    {
+        self.hidePersonalInfo = hidePersonalInfo
+        self.usageBarsShowUsed = usageBarsShowUsed
+        self.resetTimeDisplayStyle = resetTimeDisplayStyle
+        self.showOptionalCreditsAndExtraUsage = showOptionalCreditsAndExtraUsage
+    }
+}
+
 public struct LinuxProviderCard: Sendable {
     public let providerID: String
     public let title: String
@@ -46,12 +65,12 @@ public struct LinuxProviderCard: Sendable {
 
 public struct LinuxUsageBar: Sendable {
     public let title: String
-    public let fractionUsed: Double
+    public let fractionFilled: Double
     public let detail: String
 
-    public init(title: String, fractionUsed: Double, detail: String) {
+    public init(title: String, fractionFilled: Double, detail: String) {
         self.title = title
-        self.fractionUsed = fractionUsed
+        self.fractionFilled = fractionFilled
         self.detail = detail
     }
 }
@@ -61,10 +80,12 @@ public enum LinuxDashboardPresenter {
         from payloads: [LinuxProviderPayload],
         cliBinaryPath: String,
         refreshedAt: Date = Date(),
-        hidePersonalInfo: Bool = false) -> LinuxDashboardSnapshot
+        hidePersonalInfo: Bool = false,
+        options: LinuxDashboardRenderOptions? = nil) -> LinuxDashboardSnapshot
     {
+        let resolvedOptions = options ?? LinuxDashboardRenderOptions(hidePersonalInfo: hidePersonalInfo)
         let cards = payloads
-            .map { Self.makeCard(from: $0, hidePersonalInfo: hidePersonalInfo) }
+            .map { Self.makeCard(from: $0, options: resolvedOptions) }
             .sorted { lhs, rhs in
                 if lhs.title == rhs.title {
                     return lhs.providerID < rhs.providerID
@@ -83,15 +104,15 @@ public enum LinuxDashboardPresenter {
         return "Refreshed \(formatter.string(from: snapshot.refreshedAt)) with \(count) \(noun) from \(snapshot.cliBinaryPath)"
     }
 
-    private static func makeCard(from payload: LinuxProviderPayload, hidePersonalInfo: Bool) -> LinuxProviderCard {
+    private static func makeCard(from payload: LinuxProviderPayload, options: LinuxDashboardRenderOptions) -> LinuxProviderCard {
         let title = self.friendlyProviderName(for: payload.provider)
-        let account = self.accountLabel(for: payload, hidePersonalInfo: hidePersonalInfo)
+        let account = self.accountLabel(for: payload, hidePersonalInfo: options.hidePersonalInfo)
         let plan = self.planLabel(for: payload)
         let subtitle = [account, plan].compactMap { $0 }.joined(separator: " | ").nilIfEmpty
             ?? self.fallbackSubtitle(for: payload)
-        let usageBars = self.usageBars(for: payload)
+        let usageBars = self.usageBars(for: payload, options: options)
         let metadataLine = self.metadataLine(for: payload)
-        let footerLine = self.footerLine(for: payload)
+        let footerLine = self.footerLine(for: payload, options: options)
         let errorMessage = payload.error?.message
         let statusLine = self.statusLine(for: payload)
         return LinuxProviderCard(
@@ -105,21 +126,30 @@ public enum LinuxDashboardPresenter {
             usageBars: usageBars)
     }
 
-    private static func usageBars(for payload: LinuxProviderPayload) -> [LinuxUsageBar] {
+    private static func usageBars(for payload: LinuxProviderPayload, options: LinuxDashboardRenderOptions) -> [LinuxUsageBar] {
         var bars: [LinuxUsageBar] = []
         if let usage = payload.usage {
             if let primary = usage.primary {
-                bars.append(self.makeBar(title: self.windowTitle(for: primary, fallback: "Primary window"), window: primary))
+                bars.append(self.makeBar(
+                    title: self.windowTitle(for: primary, fallback: "Primary window"),
+                    window: primary,
+                    options: options))
             }
             if let secondary = usage.secondary {
-                bars.append(self.makeBar(title: self.windowTitle(for: secondary, fallback: "Secondary window"), window: secondary))
+                bars.append(self.makeBar(
+                    title: self.windowTitle(for: secondary, fallback: "Secondary window"),
+                    window: secondary,
+                    options: options))
             }
             if let tertiary = usage.tertiary {
-                bars.append(self.makeBar(title: self.windowTitle(for: tertiary, fallback: "Tertiary window"), window: tertiary))
+                bars.append(self.makeBar(
+                    title: self.windowTitle(for: tertiary, fallback: "Tertiary window"),
+                    window: tertiary,
+                    options: options))
             }
         }
         if let codeReview = payload.openaiDashboard?.codeReviewLimit {
-            bars.append(self.makeBar(title: "Code review", window: codeReview))
+            bars.append(self.makeBar(title: "Code review", window: codeReview, options: options))
         }
         return bars
     }
@@ -141,22 +171,14 @@ public enum LinuxDashboardPresenter {
         }
     }
 
-    private static func makeBar(title: String, window: RateWindow) -> LinuxUsageBar {
-        let percent = max(0, min(window.usedPercent, 100))
-        let usedText = Self.percentString(percent)
-        let resetText: String
-        if let resetDescription = window.resetDescription, !resetDescription.isEmpty {
-            resetText = resetDescription
-        } else if let resetsAt = window.resetsAt {
-            let formatter = DateFormatter()
-            formatter.dateStyle = .medium
-            formatter.timeStyle = .short
-            resetText = "resets \(formatter.string(from: resetsAt))"
-        } else {
-            resetText = "reset unavailable"
-        }
-        let detail = "\(usedText) used | \(resetText)"
-        return LinuxUsageBar(title: title, fractionUsed: percent / 100, detail: detail)
+    private static func makeBar(title: String, window: RateWindow, options: LinuxDashboardRenderOptions) -> LinuxUsageBar {
+        let used = max(0, min(window.usedPercent, 100))
+        let remaining = max(0, min(window.remainingPercent, 100))
+        let fillPercent = options.usageBarsShowUsed ? used : remaining
+        let usageText = UsageFormatter.usageLine(remaining: remaining, used: used, showUsed: options.usageBarsShowUsed)
+        let resetText = UsageFormatter.resetLine(for: window, style: options.resetTimeDisplayStyle) ?? "Reset unavailable"
+        let detail = "\(usageText) | \(resetText)"
+        return LinuxUsageBar(title: title, fractionFilled: fillPercent / 100, detail: detail)
     }
 
     private static func statusLine(for payload: LinuxProviderPayload) -> String {
@@ -183,11 +205,11 @@ public enum LinuxDashboardPresenter {
         return parts.joined(separator: " | ").nilIfEmpty
     }
 
-    private static func footerLine(for payload: LinuxProviderPayload) -> String? {
+    private static func footerLine(for payload: LinuxProviderPayload, options: LinuxDashboardRenderOptions) -> String? {
         var parts: [String] = []
-        if let credits = payload.credits?.remaining {
+        if options.showOptionalCreditsAndExtraUsage, let credits = payload.credits?.remaining {
             parts.append("Credits: \(self.decimalString(credits))")
-        } else if let credits = payload.openaiDashboard?.creditsRemaining {
+        } else if options.showOptionalCreditsAndExtraUsage, let credits = payload.openaiDashboard?.creditsRemaining {
             parts.append("Credits: \(self.decimalString(credits))")
         }
         if let updatedAt = payload.usage?.updatedAt ?? payload.credits?.updatedAt ?? payload.openaiDashboard?.updatedAt {

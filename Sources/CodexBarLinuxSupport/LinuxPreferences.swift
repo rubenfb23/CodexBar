@@ -25,6 +25,23 @@ public enum LinuxRefreshFrequency: String, CaseIterable, Codable, Sendable {
             return "30 min"
         }
     }
+
+    public var seconds: UInt32? {
+        switch self {
+        case .manual:
+            return nil
+        case .oneMinute:
+            return 60
+        case .twoMinutes:
+            return 120
+        case .fiveMinutes:
+            return 300
+        case .fifteenMinutes:
+            return 900
+        case .thirtyMinutes:
+            return 1_800
+        }
+    }
 }
 
 public struct LinuxPreferences: Codable, Sendable {

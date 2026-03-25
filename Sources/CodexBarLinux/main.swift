@@ -45,6 +45,13 @@ private func codexbarLinuxMainThreadCallback(_ userData: UnsafeMutableRawPointer
     handler.handle()
 }
 
+private func codexbarLinuxTimeoutCallback(_ userData: UnsafeMutableRawPointer?) -> Int32 {
+    guard let userData else { return 0 }
+    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
+    controller.handleRefreshTimerFired()
+    return 1
+}
+
 private final class LinuxWidgetHandlerBox {
     let handle: (LinuxWidgetPtr?) -> Void
 
@@ -75,6 +82,8 @@ private final class LinuxWindowController: @unchecked Sendable {
     private var retainedPointer: UnsafeMutableRawPointer?
     private var retainedHandlers: [LinuxWidgetHandlerBox] = []
     private var refreshSequence = 0
+    private var refreshTimerID: UInt32 = 0
+    private var refreshInFlight = false
 
     init() {
         self.preferences = self.backend.loadPreferences()
@@ -98,6 +107,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         if let window = self.window {
             codexbar_linux_window_present(window)
         }
+        self.configureRefreshTimer()
         self.refresh()
     }
 
@@ -111,10 +121,12 @@ private final class LinuxWindowController: @unchecked Sendable {
         else {
             return
         }
+        guard !self.refreshInFlight else { return }
 
         self.preferences = self.backend.loadPreferences()
+        self.refreshInFlight = true
         self.setLabelText(subtitleLabel, "Refreshing usage from CodexBarCLI...")
-        let hidePersonalInfo = self.preferences.hidePersonalInfo
+        let renderOptions = self.renderOptions()
         self.refreshSequence += 1
         let refreshToken = self.refreshSequence
 
@@ -131,7 +143,7 @@ private final class LinuxWindowController: @unchecked Sendable {
 
             let handler = LinuxMainThreadHandlerBox { [weak self] in
                 guard let self, refreshToken == self.refreshSequence else { return }
-                self.applyRefreshResult(result, hidePersonalInfo: hidePersonalInfo)
+                self.applyRefreshResult(result, options: renderOptions)
             }
             codexbar_linux_main_context_invoke(
                 codexbarLinuxMainThreadCallback,
@@ -139,9 +151,13 @@ private final class LinuxWindowController: @unchecked Sendable {
         }
     }
 
+    func handleRefreshTimerFired() {
+        self.refresh()
+    }
+
     private func applyRefreshResult(
         _ result: Result<(LinuxDashboardLoadResult, CodexBarConfig), Error>,
-        hidePersonalInfo: Bool)
+        options: LinuxDashboardRenderOptions)
     {
         guard let subtitleLabel,
               let overviewBox,
@@ -152,13 +168,14 @@ private final class LinuxWindowController: @unchecked Sendable {
         else {
             return
         }
+        self.refreshInFlight = false
 
         switch result {
         case let .success((loadResult, config)):
             let snapshot = LinuxDashboardPresenter.makeSnapshot(
                 from: loadResult.payloads,
                 cliBinaryPath: loadResult.cliBinaryPath,
-                hidePersonalInfo: hidePersonalInfo)
+                options: options)
             self.renderOverview(snapshot: snapshot, exitCode: loadResult.exitCode, into: overviewBox)
             self.renderProvidersPage(config: config, snapshot: snapshot, into: providersBox)
             self.renderGeneralPage(into: generalBox)
@@ -209,6 +226,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         } catch {
             self.renderRefreshError(error.localizedDescription)
         }
+        self.configureRefreshTimer()
         self.refresh()
     }
 
@@ -219,6 +237,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         } catch {
             self.renderRefreshError(error.localizedDescription)
         }
+        self.configureRefreshTimer()
         self.refresh()
     }
 
@@ -294,6 +313,24 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_box_append(root, stack)
 
         codexbar_linux_window_set_content(window, root)
+    }
+
+    private func configureRefreshTimer() {
+        if self.refreshTimerID != 0 {
+            codexbar_linux_source_remove(self.refreshTimerID)
+            self.refreshTimerID = 0
+        }
+
+        guard let retainedPointer, let interval = self.preferences.refreshFrequency.seconds else { return }
+        self.refreshTimerID = codexbar_linux_timeout_add_seconds(interval, codexbarLinuxTimeoutCallback, retainedPointer)
+    }
+
+    private func renderOptions() -> LinuxDashboardRenderOptions {
+        LinuxDashboardRenderOptions(
+            hidePersonalInfo: self.preferences.hidePersonalInfo,
+            usageBarsShowUsed: self.preferences.usageBarsShowUsed,
+            resetTimeDisplayStyle: self.preferences.resetTimesShowAbsolute ? .absolute : .countdown,
+            showOptionalCreditsAndExtraUsage: self.preferences.showOptionalCreditsAndExtraUsage)
     }
 
     private func renderOverview(snapshot: LinuxDashboardSnapshot, exitCode: Int32, into box: LinuxWidgetPtr) {
@@ -383,7 +420,7 @@ private final class LinuxWindowController: @unchecked Sendable {
 
         codexbar_linux_box_append(box, self.makeSectionTitle("System"))
         codexbar_linux_box_append(box, self.makeLabel(
-            text: "Ubuntu launch-at-login and notifications will be added separately. This page already persists Linux app preferences.",
+            text: "Ubuntu launch-at-login and notifications will be added separately. The refresh cadence below is now active in the running app.",
             xalign: 0,
             wrap: true,
             cssClasses: ["dim-label"]))
@@ -421,7 +458,9 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_box_append(box, self.makeSeparator())
         codexbar_linux_box_append(box, self.makeSectionTitle("Automation"))
         let cadenceInfo = self.makeLabel(
-            text: "Refresh cadence: \(self.preferences.refreshFrequency.label)",
+            text: self.preferences.refreshFrequency == .manual
+                ? "Refresh cadence: Manual only"
+                : "Refresh cadence: \(self.preferences.refreshFrequency.label) auto-refresh",
             xalign: 0,
             wrap: false,
             cssClasses: [])
@@ -440,9 +479,14 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_box_remove_all(box)
 
         codexbar_linux_box_append(box, self.makeSectionTitle("Menu content"))
+        codexbar_linux_box_append(box, self.makeLabel(
+            text: "These toggles now affect the cards rendered in Overview.",
+            xalign: 0,
+            wrap: true,
+            cssClasses: ["dim-label"]))
         codexbar_linux_box_append(box, self.makeCheckButtonRow(
             title: "Show usage as used",
-            subtitle: "Progress bars fill as quota is consumed.",
+            subtitle: "Switch between used and remaining percentages in the bars and labels.",
             active: self.preferences.usageBarsShowUsed)
         { [weak self] widget in
             guard let self else { return }
@@ -451,7 +495,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         })
         codexbar_linux_box_append(box, self.makeCheckButtonRow(
             title: "Show reset time as clock",
-            subtitle: "Persisted now; absolute reset rendering will follow in the cards.",
+            subtitle: "Switch reset details between countdown style and absolute clock time.",
             active: self.preferences.resetTimesShowAbsolute)
         { [weak self] widget in
             guard let self else { return }
@@ -460,7 +504,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         })
         codexbar_linux_box_append(box, self.makeCheckButtonRow(
             title: "Show credits + extra usage",
-            subtitle: "Keep optional credits sections visible when the Linux UI grows.",
+            subtitle: "Show or hide optional credits lines in provider cards.",
             active: self.preferences.showOptionalCreditsAndExtraUsage)
         { [weak self] widget in
             guard let self else { return }
@@ -515,6 +559,13 @@ private final class LinuxWindowController: @unchecked Sendable {
             let label = self.makeLabel(text: line, xalign: 0, wrap: true, cssClasses: [])
             codexbar_linux_box_append(box, label)
         }
+
+        let capabilities = self.makeLabel(
+            text: "Current Ubuntu app scope: native window, provider toggles, live refresh, display preferences, CLI-backed usage cards.",
+            xalign: 0,
+            wrap: true,
+            cssClasses: ["dim-label"])
+        codexbar_linux_box_append(box, capabilities)
 
         let paths = self.makeLabel(
             text: "Config: \(CodexBarConfigStore.defaultURL().path)\nLinux prefs: \(LinuxPreferencesStore.defaultURL().path)",
@@ -590,7 +641,7 @@ private final class LinuxWindowController: @unchecked Sendable {
 
             let progressBar = requireValue(codexbar_linux_progress_bar_new(), "Failed to create progress bar.")
             codexbar_linux_widget_set_hexpand(progressBar, 1)
-            codexbar_linux_progress_bar_set_fraction(progressBar, bar.fractionUsed)
+            codexbar_linux_progress_bar_set_fraction(progressBar, bar.fractionFilled)
             bar.detail.withCString { codexbar_linux_progress_bar_set_text(progressBar, $0) }
             codexbar_linux_progress_bar_set_show_text(progressBar, 1)
             codexbar_linux_box_append(content, progressBar)
