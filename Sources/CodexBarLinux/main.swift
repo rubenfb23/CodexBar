@@ -39,10 +39,24 @@ private func codexbarLinuxWidgetCallback(_ widget: LinuxWidgetPtr?, _ userData: 
     handler.handle(widget)
 }
 
+private func codexbarLinuxMainThreadCallback(_ userData: UnsafeMutableRawPointer?) {
+    guard let userData else { return }
+    let handler = Unmanaged<LinuxMainThreadHandlerBox>.fromOpaque(userData).takeRetainedValue()
+    handler.handle()
+}
+
 private final class LinuxWidgetHandlerBox {
     let handle: (LinuxWidgetPtr?) -> Void
 
     init(handle: @escaping (LinuxWidgetPtr?) -> Void) {
+        self.handle = handle
+    }
+}
+
+private final class LinuxMainThreadHandlerBox {
+    let handle: () -> Void
+
+    init(handle: @escaping () -> Void) {
         self.handle = handle
     }
 }
@@ -88,7 +102,13 @@ private final class LinuxWindowController: @unchecked Sendable {
     }
 
     func refresh() {
-        guard let subtitleLabel, let overviewBox, let providersBox, let generalBox, let displayBox, let aboutBox else {
+        guard let subtitleLabel,
+              self.overviewBox != nil,
+              self.providersBox != nil,
+              self.generalBox != nil,
+              self.displayBox != nil,
+              self.aboutBox != nil
+        else {
             return
         }
 
@@ -109,10 +129,13 @@ private final class LinuxWindowController: @unchecked Sendable {
                 result = .failure(error)
             }
 
-            DispatchQueue.main.async { [weak self] in
+            let handler = LinuxMainThreadHandlerBox { [weak self] in
                 guard let self, refreshToken == self.refreshSequence else { return }
                 self.applyRefreshResult(result, hidePersonalInfo: hidePersonalInfo)
             }
+            codexbar_linux_main_context_invoke(
+                codexbarLinuxMainThreadCallback,
+                Unmanaged.passRetained(handler).toOpaque())
         }
     }
 

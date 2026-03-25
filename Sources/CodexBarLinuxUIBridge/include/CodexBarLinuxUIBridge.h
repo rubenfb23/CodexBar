@@ -4,6 +4,7 @@
 
 typedef void (*CodexBarLinuxActivateCallback)(AdwApplication *app, void *user_data);
 typedef void (*CodexBarLinuxWidgetCallback)(GtkWidget *widget, void *user_data);
+typedef void (*CodexBarLinuxMainThreadCallback)(void *user_data);
 
 void codexbar_linux_init(void);
 
@@ -67,3 +68,6 @@ void codexbar_linux_widget_add_css_class(GtkWidget *widget, const char *class_na
 void codexbar_linux_widget_set_hexpand(GtkWidget *widget, gboolean hexpand);
 void codexbar_linux_widget_set_vexpand(GtkWidget *widget, gboolean vexpand);
 void codexbar_linux_widget_set_margin_all(GtkWidget *widget, int margin);
+void codexbar_linux_main_context_invoke(
+    CodexBarLinuxMainThreadCallback callback,
+    void *user_data);

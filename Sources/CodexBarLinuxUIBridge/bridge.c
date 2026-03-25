@@ -1,7 +1,19 @@
 #include "CodexBarLinuxUIBridge.h"
 
+typedef struct {
+    CodexBarLinuxMainThreadCallback callback;
+    void *user_data;
+} CodexBarLinuxMainThreadInvocation;
+
 void codexbar_linux_init(void) {
     adw_init();
+}
+
+static gboolean codexbar_linux_main_context_trampoline(gpointer data) {
+    CodexBarLinuxMainThreadInvocation *invocation = data;
+    invocation->callback(invocation->user_data);
+    g_free(invocation);
+    return G_SOURCE_REMOVE;
 }
 
 AdwApplication *codexbar_linux_application_new(const char *application_id) {
@@ -179,4 +191,14 @@ void codexbar_linux_widget_set_margin_all(GtkWidget *widget, int margin) {
     gtk_widget_set_margin_bottom(widget, margin);
     gtk_widget_set_margin_start(widget, margin);
     gtk_widget_set_margin_end(widget, margin);
+}
+
+void codexbar_linux_main_context_invoke(
+    CodexBarLinuxMainThreadCallback callback,
+    void *user_data)
+{
+    CodexBarLinuxMainThreadInvocation *invocation = g_new0(CodexBarLinuxMainThreadInvocation, 1);
+    invocation->callback = callback;
+    invocation->user_data = user_data;
+    g_main_context_invoke(NULL, codexbar_linux_main_context_trampoline, invocation);
 }
