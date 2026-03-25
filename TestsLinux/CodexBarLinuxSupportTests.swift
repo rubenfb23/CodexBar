@@ -220,4 +220,14 @@ struct CodexBarLinuxSupportTests {
         #expect(payloads.count == 2)
         #expect(payloads.map(\.provider) == ["codex", "claude"])
     }
+
+    @Test
+    func backendBuildsUsageArgumentsForSingleEnabledProvider() {
+        let arguments = LinuxCLIBackend.usageArguments(for: .claude)
+
+        #expect(arguments.contains("--json-only"))
+        #expect(arguments.contains("--status"))
+        #expect(arguments.contains("claude"))
+        #expect(!arguments.contains("all"))
+    }
 }

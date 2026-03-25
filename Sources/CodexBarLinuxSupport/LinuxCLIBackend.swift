@@ -73,37 +73,56 @@ public struct LinuxCLIBackend: Sendable {
     }
 
     public func fetchUsagePayloads() throws -> LinuxDashboardLoadResult {
+        let config = try self.loadConfig()
+        let enabledProviders = config.enabledProviders()
         let cliBinaryPath = try self.resolveCLIBinaryPath()
-        let command = try self.runProcess(
-            executablePath: cliBinaryPath,
-            arguments: [
-                "usage",
-                "--format", "json",
-                "--json-only",
-                "--pretty",
-                "--status",
-                "--provider", "all",
-                "--web-timeout", "20",
-            ],
-            label: "CodexBar Linux refresh")
-        let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            throw LinuxCLIBackendError.emptyOutput("CodexBarCLI usage")
+
+        guard !enabledProviders.isEmpty else {
+            return LinuxDashboardLoadResult(
+                cliBinaryPath: cliBinaryPath,
+                payloads: [],
+                stdout: "",
+                stderr: "",
+                exitCode: 0)
         }
-        let payloads = try self.decodePayloads(from: command.stdout)
-        if command.exitCode != 0, payloads.isEmpty {
+
+        var payloads: [LinuxProviderPayload] = []
+        var stdoutParts: [String] = []
+        var stderrParts: [String] = []
+        var lastExitCode: Int32 = 0
+
+        for provider in enabledProviders {
+            let command = try self.runProcess(
+                executablePath: cliBinaryPath,
+                arguments: Self.usageArguments(for: provider),
+                label: "CodexBar Linux refresh (\(provider.rawValue))")
+            let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty {
+                payloads.append(contentsOf: try self.decodePayloads(from: command.stdout))
+                stdoutParts.append(command.stdout)
+            }
+            if !command.stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                stderrParts.append(command.stderr)
+            }
+            if command.exitCode != 0 {
+                lastExitCode = command.exitCode
+            }
+        }
+
+        if payloads.isEmpty, lastExitCode != 0 {
             throw LinuxCLIBackendError.commandFailed(
                 label: "CodexBarCLI usage",
-                code: command.exitCode,
-                stderr: command.stderr,
-                stdout: command.stdout)
+                code: lastExitCode,
+                stderr: stderrParts.joined(separator: "\n"),
+                stdout: stdoutParts.joined(separator: "\n"))
         }
+
         return LinuxDashboardLoadResult(
             cliBinaryPath: cliBinaryPath,
             payloads: payloads,
-            stdout: command.stdout,
-            stderr: command.stderr,
-            exitCode: command.exitCode)
+            stdout: stdoutParts.joined(separator: "\n"),
+            stderr: stderrParts.joined(separator: "\n"),
+            exitCode: lastExitCode)
     }
 
     @discardableResult
@@ -177,6 +196,19 @@ public struct LinuxCLIBackend: Sendable {
 
     private func decodePayloads(from stdout: String) throws -> [LinuxProviderPayload] {
         try Self.decodePayloadsFromCLIStdout(stdout)
+    }
+
+    static func usageArguments(for provider: UsageProvider) -> [String] {
+        let cliName = ProviderDescriptorRegistry.descriptor(for: provider).metadata.cliName
+        return [
+            "usage",
+            "--format", "json",
+            "--json-only",
+            "--pretty",
+            "--status",
+            "--provider", cliName,
+            "--web-timeout", "20",
+        ]
     }
 
     static func extractJSONArraySegments(from text: String) -> [String] {
