@@ -61,6 +61,7 @@ struct CodexBarLinuxSupportTests {
         #expect(snapshot.cards[1].subtitle.contains("ruben@example.com"))
         #expect(snapshot.cards[1].subtitle.contains("Pro"))
         #expect(snapshot.cards[1].usageBars.count == 1)
+        #expect(snapshot.cards[1].usageBars[0].title == "5h")
         #expect(snapshot.cards[1].footerLine?.contains("41.5") == true)
         #expect(LinuxDashboardPresenter.refreshSubtitle(for: snapshot).contains("/tmp/CodexBarCLI"))
     }
@@ -164,6 +165,40 @@ struct CodexBarLinuxSupportTests {
 
         #expect(snapshot.cards.count == 1)
         #expect(snapshot.cards[0].subtitle == "Connected via OAuth")
+    }
+
+    @Test
+    func presenterUsesDurationLabelsForPrimaryAndWeeklyWindows() {
+        let payload = LinuxProviderPayload(
+            provider: "codex",
+            account: nil,
+            version: nil,
+            source: "oauth",
+            status: nil,
+            usage: UsageSnapshot(
+                primary: RateWindow(
+                    usedPercent: 50,
+                    windowMinutes: 300,
+                    resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    resetDescription: nil),
+                secondary: RateWindow(
+                    usedPercent: 25,
+                    windowMinutes: 10_080,
+                    resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    resetDescription: nil),
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                identity: nil),
+            credits: nil,
+            openaiDashboard: nil,
+            error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload],
+            cliBinaryPath: "/tmp/CodexBarCLI",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.cards[0].usageBars.map(\.title) == ["5h", "Week"])
     }
 
     @Test

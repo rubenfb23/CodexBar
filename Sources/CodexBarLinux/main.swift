@@ -2,6 +2,7 @@
 import CodexBarCore
 import CodexBarLinuxSupport
 import CodexBarLinuxUIBridge
+import Dispatch
 import Foundation
 import Glibc
 
@@ -46,7 +47,7 @@ private final class LinuxWidgetHandlerBox {
     }
 }
 
-private final class LinuxWindowController {
+private final class LinuxWindowController: @unchecked Sendable {
     private let backend = LinuxCLIBackend()
     private var preferences: LinuxPreferences
     private var application: LinuxAppPtr?
@@ -59,6 +60,7 @@ private final class LinuxWindowController {
     private var aboutBox: LinuxWidgetPtr?
     private var retainedPointer: UnsafeMutableRawPointer?
     private var retainedHandlers: [LinuxWidgetHandlerBox] = []
+    private var refreshSequence = 0
 
     init() {
         self.preferences = self.backend.loadPreferences()
@@ -92,14 +94,48 @@ private final class LinuxWindowController {
 
         self.preferences = self.backend.loadPreferences()
         self.setLabelText(subtitleLabel, "Refreshing usage from CodexBarCLI...")
+        let hidePersonalInfo = self.preferences.hidePersonalInfo
+        self.refreshSequence += 1
+        let refreshToken = self.refreshSequence
 
-        do {
-            let loadResult = try self.backend.fetchUsagePayloads()
-            let config = try self.backend.loadConfig()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self else { return }
+            let result: Result<(LinuxDashboardLoadResult, CodexBarConfig), Error>
+            do {
+                let loadResult = try self.backend.fetchUsagePayloads()
+                let config = try self.backend.loadConfig()
+                result = .success((loadResult, config))
+            } catch {
+                result = .failure(error)
+            }
+
+            DispatchQueue.main.async { [weak self] in
+                guard let self, refreshToken == self.refreshSequence else { return }
+                self.applyRefreshResult(result, hidePersonalInfo: hidePersonalInfo)
+            }
+        }
+    }
+
+    private func applyRefreshResult(
+        _ result: Result<(LinuxDashboardLoadResult, CodexBarConfig), Error>,
+        hidePersonalInfo: Bool)
+    {
+        guard let subtitleLabel,
+              let overviewBox,
+              let providersBox,
+              let generalBox,
+              let displayBox,
+              let aboutBox
+        else {
+            return
+        }
+
+        switch result {
+        case let .success((loadResult, config)):
             let snapshot = LinuxDashboardPresenter.makeSnapshot(
                 from: loadResult.payloads,
                 cliBinaryPath: loadResult.cliBinaryPath,
-                hidePersonalInfo: self.preferences.hidePersonalInfo)
+                hidePersonalInfo: hidePersonalInfo)
             self.renderOverview(snapshot: snapshot, exitCode: loadResult.exitCode, into: overviewBox)
             self.renderProvidersPage(config: config, snapshot: snapshot, into: providersBox)
             self.renderGeneralPage(into: generalBox)
@@ -111,7 +147,8 @@ private final class LinuxWindowController {
                 subtitle += " | CLI exited with \(loadResult.exitCode), some providers may be unavailable."
             }
             self.setLabelText(subtitleLabel, subtitle)
-        } catch {
+
+        case let .failure(error):
             self.renderRefreshError(error.localizedDescription)
             codexbar_linux_box_remove_all(overviewBox)
             codexbar_linux_box_remove_all(providersBox)

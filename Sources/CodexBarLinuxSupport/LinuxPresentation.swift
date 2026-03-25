@@ -109,19 +109,36 @@ public enum LinuxDashboardPresenter {
         var bars: [LinuxUsageBar] = []
         if let usage = payload.usage {
             if let primary = usage.primary {
-                bars.append(self.makeBar(title: "Primary window", window: primary))
+                bars.append(self.makeBar(title: self.windowTitle(for: primary, fallback: "Primary window"), window: primary))
             }
             if let secondary = usage.secondary {
-                bars.append(self.makeBar(title: "Secondary window", window: secondary))
+                bars.append(self.makeBar(title: self.windowTitle(for: secondary, fallback: "Secondary window"), window: secondary))
             }
             if let tertiary = usage.tertiary {
-                bars.append(self.makeBar(title: "Tertiary window", window: tertiary))
+                bars.append(self.makeBar(title: self.windowTitle(for: tertiary, fallback: "Tertiary window"), window: tertiary))
             }
         }
         if let codeReview = payload.openaiDashboard?.codeReviewLimit {
             bars.append(self.makeBar(title: "Code review", window: codeReview))
         }
         return bars
+    }
+
+    private static func windowTitle(for window: RateWindow, fallback: String) -> String {
+        switch window.windowMinutes {
+        case 60:
+            return "1h"
+        case 300:
+            return "5h"
+        case 1_440:
+            return "Day"
+        case 10_080:
+            return "Week"
+        case 43_200:
+            return "Month"
+        default:
+            return fallback
+        }
     }
 
     private static func makeBar(title: String, window: RateWindow) -> LinuxUsageBar {
