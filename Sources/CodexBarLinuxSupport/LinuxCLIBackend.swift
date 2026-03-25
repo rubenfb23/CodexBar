@@ -4,6 +4,7 @@ import Foundation
 public struct LinuxDashboardLoadResult: Sendable {
     public let cliBinaryPath: String
     public let payloads: [LinuxProviderPayload]
+    public let cachedProviderIDs: [String]
     public let stdout: String
     public let stderr: String
     public let exitCode: Int32
@@ -11,12 +12,14 @@ public struct LinuxDashboardLoadResult: Sendable {
     public init(
         cliBinaryPath: String,
         payloads: [LinuxProviderPayload],
+        cachedProviderIDs: [String],
         stdout: String,
         stderr: String,
         exitCode: Int32)
     {
         self.cliBinaryPath = cliBinaryPath
         self.payloads = payloads
+        self.cachedProviderIDs = cachedProviderIDs
         self.stdout = stdout
         self.stderr = stderr
         self.exitCode = exitCode
@@ -61,35 +64,42 @@ public struct LinuxCLIBackend: Sendable {
     public let environment: [String: String]
     public let configStore: CodexBarConfigStore
     public let preferencesStore: LinuxPreferencesStore
+    public let snapshotCacheStore: LinuxSnapshotCacheStore
 
     public init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         configStore: CodexBarConfigStore = CodexBarConfigStore(),
-        preferencesStore: LinuxPreferencesStore = LinuxPreferencesStore())
+        preferencesStore: LinuxPreferencesStore = LinuxPreferencesStore(),
+        snapshotCacheStore: LinuxSnapshotCacheStore = LinuxSnapshotCacheStore())
     {
         self.environment = environment
         self.configStore = configStore
         self.preferencesStore = preferencesStore
+        self.snapshotCacheStore = snapshotCacheStore
     }
 
     public func fetchUsagePayloads() throws -> LinuxDashboardLoadResult {
         let config = try self.loadConfig()
         let enabledProviders = config.enabledProviders()
         let cliBinaryPath = try self.resolveCLIBinaryPath()
+        var cachedSnapshots = self.snapshotCacheStore.load()
 
         guard !enabledProviders.isEmpty else {
             return LinuxDashboardLoadResult(
                 cliBinaryPath: cliBinaryPath,
                 payloads: [],
+                cachedProviderIDs: [],
                 stdout: "",
                 stderr: "",
                 exitCode: 0)
         }
 
         var payloads: [LinuxProviderPayload] = []
+        var cachedProviderIDs: [String] = []
         var stdoutParts: [String] = []
         var stderrParts: [String] = []
         var lastExitCode: Int32 = 0
+        var cacheDidChange = false
 
         for provider in enabledProviders {
             let configuredSource = config.providerConfig(for: provider)?.source ?? .auto
@@ -124,7 +134,19 @@ public struct LinuxCLIBackend: Sendable {
                 }
             }
 
-            payloads.append(contentsOf: chosenPayloads)
+            if Self.containsSuccessfulPayload(chosenPayloads, for: provider) {
+                payloads.append(contentsOf: chosenPayloads)
+                if let successfulPayload = chosenPayloads.first(where: { $0.provider == provider.rawValue && $0.error == nil }) {
+                    cachedSnapshots[provider.rawValue] = LinuxCachedProviderSnapshot(payload: successfulPayload, cachedAt: Date())
+                    cacheDidChange = true
+                }
+            } else if let cachedPayload = cachedSnapshots[provider.rawValue]?.payload {
+                payloads.append(cachedPayload)
+                cachedProviderIDs.append(provider.rawValue)
+            } else {
+                payloads.append(contentsOf: chosenPayloads)
+            }
+
             if !chosenStdout.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 stdoutParts.append(chosenStdout)
             }
@@ -134,6 +156,10 @@ public struct LinuxCLIBackend: Sendable {
             if chosenExitCode != 0 {
                 lastExitCode = chosenExitCode
             }
+        }
+
+        if cacheDidChange {
+            try self.snapshotCacheStore.save(cachedSnapshots)
         }
 
         if payloads.isEmpty, lastExitCode != 0 {
@@ -147,6 +173,7 @@ public struct LinuxCLIBackend: Sendable {
         return LinuxDashboardLoadResult(
             cliBinaryPath: cliBinaryPath,
             payloads: payloads,
+            cachedProviderIDs: cachedProviderIDs,
             stdout: stdoutParts.joined(separator: "\n"),
             stderr: stderrParts.joined(separator: "\n"),
             exitCode: lastExitCode)

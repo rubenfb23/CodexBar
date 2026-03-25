@@ -396,6 +396,164 @@ struct CodexBarLinuxSupportTests {
     }
 
     @Test
+    func snapshotCacheStoreSavesAndLoadsProviderSnapshots() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let store = LinuxSnapshotCacheStore(fileURL: tempDirectory.appendingPathComponent("provider-cache.json"))
+        let payload = LinuxProviderPayload(
+            provider: "claude",
+            account: nil,
+            version: "1.0",
+            source: "oauth",
+            status: nil,
+            usage: UsageSnapshot(
+                primary: RateWindow(
+                    usedPercent: 10,
+                    windowMinutes: 300,
+                    resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    resetDescription: nil),
+                secondary: nil,
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                identity: nil),
+            credits: nil,
+            openaiDashboard: nil,
+            error: nil)
+
+        try store.save([
+            "claude": LinuxCachedProviderSnapshot(
+                payload: payload,
+                cachedAt: Date(timeIntervalSince1970: 1_750_000_010)),
+        ])
+
+        let loaded = store.load()
+        #expect(loaded["claude"]?.payload.provider == "claude")
+        #expect(loaded["claude"]?.payload.source == "oauth")
+        #expect(loaded["claude"]?.payload.error == nil)
+    }
+
+    @Test
+    func backendUsesCachedSnapshotWhenAllAttemptsFail() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let cliPath = tempDirectory.appendingPathComponent("CodexBarCLI")
+        let script = """
+        #!/bin/bash
+        source_mode=""
+        provider=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --source)
+              source_mode="$2"
+              shift 2
+              ;;
+            --provider)
+              provider="$2"
+              shift 2
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+        if [[ "$provider" == "claude" && "$source_mode" == "oauth" ]]; then
+          cat <<'JSON'
+        [
+          {
+            "provider": "claude",
+            "source": "oauth",
+            "error": {
+              "code": 3,
+              "message": "Rate limited. Please try again later.",
+              "kind": "provider"
+            }
+          }
+        ]
+        JSON
+          exit 3
+        fi
+        if [[ "$provider" == "claude" && "$source_mode" == "cli" ]]; then
+          cat <<'JSON'
+        [
+          {
+            "provider": "claude",
+            "source": "cli",
+            "error": {
+              "code": 1,
+              "message": "Generic CLI failure",
+              "kind": "provider"
+            }
+          }
+        ]
+        JSON
+          exit 1
+        fi
+        echo '[]'
+        """
+        try Data(script.utf8).write(to: cliPath)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: cliPath.path)
+
+        let configStore = CodexBarConfigStore(fileURL: tempDirectory.appendingPathComponent("config.json"))
+        try configStore.save(CodexBarConfig(providers: [
+            ProviderConfig(id: .claude, enabled: true),
+        ]))
+
+        let cacheStore = LinuxSnapshotCacheStore(fileURL: tempDirectory.appendingPathComponent("provider-cache.json"))
+        let cachedPayload = LinuxProviderPayload(
+            provider: "claude",
+            account: "cached@example.com",
+            version: "2.1.0",
+            source: "oauth",
+            status: LinuxProviderStatusPayload(
+                indicator: .none,
+                description: "Operational",
+                updatedAt: nil,
+                url: "https://status.claude.com/"),
+            usage: UsageSnapshot(
+                primary: RateWindow(
+                    usedPercent: 25,
+                    windowMinutes: 300,
+                    resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    resetDescription: nil),
+                secondary: nil,
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                identity: ProviderIdentitySnapshot(
+                    providerID: .claude,
+                    accountEmail: "cached@example.com",
+                    accountOrganization: nil,
+                    loginMethod: "Pro")),
+            credits: nil,
+            openaiDashboard: nil,
+            error: nil)
+        try cacheStore.save([
+            "claude": LinuxCachedProviderSnapshot(
+                payload: cachedPayload,
+                cachedAt: Date(timeIntervalSince1970: 1_750_000_100)),
+        ])
+
+        let backend = LinuxCLIBackend(
+            environment: [
+                "PATH": tempDirectory.path,
+                "CODEXBAR_LINUX_CLI_BINARY": cliPath.path,
+            ],
+            configStore: configStore,
+            preferencesStore: LinuxPreferencesStore(fileURL: tempDirectory.appendingPathComponent("preferences.json")),
+            snapshotCacheStore: cacheStore)
+
+        let result = try backend.fetchUsagePayloads()
+
+        #expect(result.payloads.count == 1)
+        #expect(result.payloads[0].provider == "claude")
+        #expect(result.payloads[0].error == nil)
+        #expect(result.payloads[0].account == "cached@example.com")
+        #expect(result.cachedProviderIDs == ["claude"])
+        #expect(result.exitCode != 0)
+    }
+
+    @Test
     func backendDetectsSuccessfulPayloadForProvider() {
         let payloads = [
             LinuxProviderPayload(

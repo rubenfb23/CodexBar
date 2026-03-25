@@ -1,7 +1,7 @@
 import CodexBarCore
 import Foundation
 
-public struct LinuxProviderPayload: Decodable, Sendable {
+public struct LinuxProviderPayload: Codable, Sendable {
     public let provider: String
     public let account: String?
     public let version: String?
@@ -35,7 +35,7 @@ public struct LinuxProviderPayload: Decodable, Sendable {
     }
 }
 
-public struct LinuxProviderStatusPayload: Decodable, Sendable {
+public struct LinuxProviderStatusPayload: Codable, Sendable {
     public let indicator: Indicator
     public let description: String?
     public let updatedAt: Date?
@@ -48,7 +48,7 @@ public struct LinuxProviderStatusPayload: Decodable, Sendable {
         self.url = url
     }
 
-    public enum Indicator: String, Decodable, Sendable {
+    public enum Indicator: String, Codable, Sendable {
         case none
         case minor
         case major
@@ -75,7 +75,7 @@ public struct LinuxProviderStatusPayload: Decodable, Sendable {
     }
 }
 
-public struct LinuxProviderErrorPayload: Decodable, Sendable {
+public struct LinuxProviderErrorPayload: Codable, Sendable {
     public let code: Int32
     public let message: String
     public let kind: Kind?
@@ -86,7 +86,7 @@ public struct LinuxProviderErrorPayload: Decodable, Sendable {
         self.kind = kind
     }
 
-    public enum Kind: String, Decodable, Sendable {
+    public enum Kind: String, Codable, Sendable {
         case args
         case config
         case provider

@@ -186,6 +186,11 @@ private final class LinuxWindowController: @unchecked Sendable {
             if loadResult.exitCode != 0 {
                 subtitle += " | CLI exited with \(loadResult.exitCode), some providers may be unavailable."
             }
+            if !loadResult.cachedProviderIDs.isEmpty {
+                let count = loadResult.cachedProviderIDs.count
+                let noun = count == 1 ? "provider" : "providers"
+                subtitle += " | Showing cached data for \(count) \(noun)."
+            }
             self.setLabelText(subtitleLabel, subtitle)
 
         case let .failure(error):
