@@ -43,6 +43,7 @@ ensure_apt_packages() {
         gpg \
         pkg-config \
         xdg-utils \
+        libsqlite3-dev \
         libgtk-4-dev \
         libadwaita-1-dev
 }

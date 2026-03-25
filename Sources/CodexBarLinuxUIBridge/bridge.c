@@ -33,7 +33,7 @@ void codexbar_linux_window_set_default_size(AdwApplicationWindow *window, int wi
 }
 
 void codexbar_linux_window_set_content(AdwApplicationWindow *window, GtkWidget *child) {
-    gtk_window_set_child(GTK_WINDOW(window), child);
+    adw_application_window_set_content(window, child);
 }
 
 void codexbar_linux_window_present(AdwApplicationWindow *window) {

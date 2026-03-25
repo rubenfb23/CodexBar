@@ -6,6 +6,16 @@ import Foundation
 import Glibc
 
 private let appID = "com.steipete.codexbar.linux"
+private typealias LinuxAppPtr = UnsafeMutablePointer<AdwApplication>
+private typealias LinuxWindowPtr = UnsafeMutablePointer<AdwApplicationWindow>
+private typealias LinuxWidgetPtr = UnsafeMutablePointer<GtkWidget>
+
+private func requireValue<T>(_ value: T?, _ message: String) -> T {
+    guard let value else {
+        fatalError(message)
+    }
+    return value
+}
 
 @main
 enum CodexBarLinuxApp {
@@ -16,22 +26,22 @@ enum CodexBarLinuxApp {
     }
 }
 
-private func codexbarLinuxActivateCallback(_ app: OpaquePointer?, _ userData: UnsafeMutableRawPointer?) {
+private func codexbarLinuxActivateCallback(_ app: LinuxAppPtr?, _ userData: UnsafeMutableRawPointer?) {
     guard let userData else { return }
     let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
     controller.handleActivate(application: app)
 }
 
-private func codexbarLinuxWidgetCallback(_ widget: OpaquePointer?, _ userData: UnsafeMutableRawPointer?) {
+private func codexbarLinuxWidgetCallback(_ widget: LinuxWidgetPtr?, _ userData: UnsafeMutableRawPointer?) {
     guard let userData else { return }
     let handler = Unmanaged<LinuxWidgetHandlerBox>.fromOpaque(userData).takeUnretainedValue()
     handler.handle(widget)
 }
 
 private final class LinuxWidgetHandlerBox {
-    let handle: (OpaquePointer?) -> Void
+    let handle: (LinuxWidgetPtr?) -> Void
 
-    init(handle: @escaping (OpaquePointer?) -> Void) {
+    init(handle: @escaping (LinuxWidgetPtr?) -> Void) {
         self.handle = handle
     }
 }
@@ -39,14 +49,14 @@ private final class LinuxWidgetHandlerBox {
 private final class LinuxWindowController {
     private let backend = LinuxCLIBackend()
     private var preferences: LinuxPreferences
-    private var application: OpaquePointer?
-    private var window: OpaquePointer?
-    private var subtitleLabel: OpaquePointer?
-    private var overviewBox: OpaquePointer?
-    private var providersBox: OpaquePointer?
-    private var generalBox: OpaquePointer?
-    private var displayBox: OpaquePointer?
-    private var aboutBox: OpaquePointer?
+    private var application: LinuxAppPtr?
+    private var window: LinuxWindowPtr?
+    private var subtitleLabel: LinuxWidgetPtr?
+    private var overviewBox: LinuxWidgetPtr?
+    private var providersBox: LinuxWidgetPtr?
+    private var generalBox: LinuxWidgetPtr?
+    private var displayBox: LinuxWidgetPtr?
+    private var aboutBox: LinuxWidgetPtr?
     private var retainedPointer: UnsafeMutableRawPointer?
     private var retainedHandlers: [LinuxWidgetHandlerBox] = []
 
@@ -56,16 +66,15 @@ private final class LinuxWindowController {
 
     func run() {
         self.retainedPointer = Unmanaged.passRetained(self).toOpaque()
-        self.application = appID.withCString { codexbar_linux_application_new($0) }
-        guard let application, let retainedPointer else {
-            fputs("Failed to create CodexBar Linux application.\n", stderr)
-            return
-        }
+        self.application = requireValue(
+            appID.withCString { codexbar_linux_application_new($0) },
+            "Failed to create CodexBar Linux application.")
+        guard let application, let retainedPointer else { return }
         codexbar_linux_application_on_activate(application, codexbarLinuxActivateCallback, retainedPointer)
         _ = codexbar_linux_application_run(application)
     }
 
-    func handleActivate(application: OpaquePointer?) {
+    func handleActivate(application: LinuxAppPtr?) {
         guard let application else { return }
         if self.window == nil {
             self.buildWindow(application: application)
@@ -162,13 +171,13 @@ private final class LinuxWindowController {
         self.refresh()
     }
 
-    private func buildWindow(application: OpaquePointer) {
-        let window = codexbar_linux_window_new(application)
+    private func buildWindow(application: LinuxAppPtr) {
+        let window = requireValue(codexbar_linux_window_new(application), "Failed to create application window.")
         self.window = window
         "CodexBar Ubuntu".withCString { codexbar_linux_window_set_title(window, $0) }
         codexbar_linux_window_set_default_size(window, 1080, 780)
 
-        let root = codexbar_linux_box_new_vertical(16)
+        let root = requireValue(codexbar_linux_box_new_vertical(16), "Failed to create root box.")
         codexbar_linux_widget_set_margin_all(root, 24)
         codexbar_linux_widget_set_hexpand(root, 1)
         codexbar_linux_widget_set_vexpand(root, 1)
@@ -188,7 +197,7 @@ private final class LinuxWindowController {
         self.subtitleLabel = subtitleLabel
         codexbar_linux_box_append(root, subtitleLabel)
 
-        let toolbar = codexbar_linux_box_new_horizontal(12)
+        let toolbar = requireValue(codexbar_linux_box_new_horizontal(12), "Failed to create toolbar.")
         codexbar_linux_box_append(toolbar, self.makeButton(title: "Refresh") { [weak self] _ in
             self?.refresh()
         })
@@ -197,8 +206,8 @@ private final class LinuxWindowController {
         })
         codexbar_linux_box_append(root, toolbar)
 
-        let stack = codexbar_linux_stack_new()
-        let switcher = codexbar_linux_stack_switcher_new()
+        let stack = requireValue(codexbar_linux_stack_new(), "Failed to create page stack.")
+        let switcher = requireValue(codexbar_linux_stack_switcher_new(), "Failed to create stack switcher.")
         codexbar_linux_stack_switcher_set_stack(switcher, stack)
         codexbar_linux_box_append(root, switcher)
 
@@ -227,7 +236,7 @@ private final class LinuxWindowController {
         codexbar_linux_window_set_content(window, root)
     }
 
-    private func renderOverview(snapshot: LinuxDashboardSnapshot, exitCode: Int32, into box: OpaquePointer) {
+    private func renderOverview(snapshot: LinuxDashboardSnapshot, exitCode: Int32, into box: LinuxWidgetPtr) {
         codexbar_linux_box_remove_all(box)
         if snapshot.cards.isEmpty {
             let emptyLabel = self.makeLabel(
@@ -254,7 +263,7 @@ private final class LinuxWindowController {
         }
     }
 
-    private func renderProvidersPage(config: CodexBarConfig, snapshot: LinuxDashboardSnapshot, into box: OpaquePointer) {
+    private func renderProvidersPage(config: CodexBarConfig, snapshot: LinuxDashboardSnapshot, into box: LinuxWidgetPtr) {
         codexbar_linux_box_remove_all(box)
 
         let intro = self.makeLabel(
@@ -267,8 +276,8 @@ private final class LinuxWindowController {
         let cardsByProvider = Dictionary(uniqueKeysWithValues: snapshot.cards.map { ($0.providerID, $0) })
         let rows = LinuxPreferencesPresenter.providerRows(config: config)
         for row in rows {
-            let frame = row.displayName.withCString { codexbar_linux_frame_new($0) }
-            let content = codexbar_linux_box_new_vertical(8)
+            let frame = requireValue(row.displayName.withCString { codexbar_linux_frame_new($0) }, "Failed to create frame.")
+            let content = requireValue(codexbar_linux_box_new_vertical(8), "Failed to create provider content box.")
             codexbar_linux_widget_set_margin_all(content, 16)
 
             let toggle = self.makeCheckButton(title: "Enabled", active: row.enabled) { [weak self] widget in
@@ -309,7 +318,7 @@ private final class LinuxWindowController {
         }
     }
 
-    private func renderGeneralPage(into box: OpaquePointer) {
+    private func renderGeneralPage(into box: LinuxWidgetPtr) {
         codexbar_linux_box_remove_all(box)
 
         codexbar_linux_box_append(box, self.makeSectionTitle("System"))
@@ -367,7 +376,7 @@ private final class LinuxWindowController {
         codexbar_linux_box_append(box, cadenceButtons)
     }
 
-    private func renderDisplayPage(into box: OpaquePointer) {
+    private func renderDisplayPage(into box: LinuxWidgetPtr) {
         codexbar_linux_box_remove_all(box)
 
         codexbar_linux_box_append(box, self.makeSectionTitle("Menu content"))
@@ -439,7 +448,7 @@ private final class LinuxWindowController {
         })
     }
 
-    private func renderAboutPage(into box: OpaquePointer) {
+    private func renderAboutPage(into box: LinuxWidgetPtr) {
         codexbar_linux_box_remove_all(box)
         codexbar_linux_box_append(box, self.makeSectionTitle("About"))
         for line in LinuxPreferencesPresenter.aboutLines() {
@@ -460,8 +469,8 @@ private final class LinuxWindowController {
         self.setLabelText(subtitleLabel, "Refresh failed: \(message)")
     }
 
-    private func addPage(to stack: OpaquePointer, name: String, title: String, content: OpaquePointer) {
-        let scroll = codexbar_linux_scrolled_window_new()
+    private func addPage(to stack: LinuxWidgetPtr, name: String, title: String, content: LinuxWidgetPtr) {
+        let scroll = requireValue(codexbar_linux_scrolled_window_new(), "Failed to create scrolled page.")
         codexbar_linux_widget_set_hexpand(scroll, 1)
         codexbar_linux_widget_set_vexpand(scroll, 1)
         codexbar_linux_scrolled_window_set_child(scroll, content)
@@ -472,26 +481,26 @@ private final class LinuxWindowController {
         }
     }
 
-    private func makePageContainer() -> OpaquePointer {
-        let box = codexbar_linux_box_new_vertical(16)
+    private func makePageContainer() -> LinuxWidgetPtr {
+        let box = requireValue(codexbar_linux_box_new_vertical(16), "Failed to create page container.")
         codexbar_linux_widget_set_margin_all(box, 12)
         codexbar_linux_widget_set_hexpand(box, 1)
         return box
     }
 
-    private func makeSectionTitle(_ text: String) -> OpaquePointer {
+    private func makeSectionTitle(_ text: String) -> LinuxWidgetPtr {
         self.makeLabel(text: text, xalign: 0, wrap: false, cssClasses: ["heading"])
     }
 
-    private func makeSeparator() -> OpaquePointer {
-        codexbar_linux_separator_new()
+    private func makeSeparator() -> LinuxWidgetPtr {
+        requireValue(codexbar_linux_separator_new(), "Failed to create separator.")
     }
 
-    private func makeCardWidget(_ card: LinuxProviderCard) -> OpaquePointer {
-        let frame = card.title.withCString { codexbar_linux_frame_new($0) }
+    private func makeCardWidget(_ card: LinuxProviderCard) -> LinuxWidgetPtr {
+        let frame = requireValue(card.title.withCString { codexbar_linux_frame_new($0) }, "Failed to create card frame.")
         codexbar_linux_widget_set_hexpand(frame, 1)
 
-        let content = codexbar_linux_box_new_vertical(8)
+        let content = requireValue(codexbar_linux_box_new_vertical(8), "Failed to create card content.")
         codexbar_linux_widget_set_margin_all(content, 16)
 
         let subtitle = self.makeLabel(text: card.subtitle, xalign: 0, wrap: true, cssClasses: ["heading"])
@@ -519,7 +528,7 @@ private final class LinuxWindowController {
             let titleLabel = self.makeLabel(text: bar.title, xalign: 0, wrap: false, cssClasses: [])
             codexbar_linux_box_append(content, titleLabel)
 
-            let progressBar = codexbar_linux_progress_bar_new()
+            let progressBar = requireValue(codexbar_linux_progress_bar_new(), "Failed to create progress bar.")
             codexbar_linux_widget_set_hexpand(progressBar, 1)
             codexbar_linux_progress_bar_set_fraction(progressBar, bar.fractionUsed)
             bar.detail.withCString { codexbar_linux_progress_bar_set_text(progressBar, $0) }
@@ -535,9 +544,9 @@ private final class LinuxWindowController {
         title: String,
         subtitle: String,
         active: Bool,
-        onToggle: @escaping (OpaquePointer) -> Void) -> OpaquePointer
+        onToggle: @escaping (LinuxWidgetPtr) -> Void) -> LinuxWidgetPtr
     {
-        let row = codexbar_linux_box_new_vertical(4)
+        let row = requireValue(codexbar_linux_box_new_vertical(4), "Failed to create check button row.")
         let toggle = self.makeCheckButton(title: title, active: active, onToggle: onToggle)
         codexbar_linux_box_append(row, toggle)
         let subtitleLabel = self.makeLabel(text: subtitle, xalign: 0, wrap: true, cssClasses: ["dim-label"])
@@ -548,9 +557,9 @@ private final class LinuxWindowController {
     private func makeCheckButton(
         title: String,
         active: Bool,
-        onToggle: @escaping (OpaquePointer) -> Void) -> OpaquePointer
+        onToggle: @escaping (LinuxWidgetPtr) -> Void) -> LinuxWidgetPtr
     {
-        let button = title.withCString { codexbar_linux_check_button_new($0) }
+        let button = requireValue(title.withCString { codexbar_linux_check_button_new($0) }, "Failed to create check button.")
         codexbar_linux_check_button_set_active(button, active ? 1 : 0)
         let handler = LinuxWidgetHandlerBox { widget in
             guard let widget else { return }
@@ -564,16 +573,16 @@ private final class LinuxWindowController {
         return button
     }
 
-    private func makeButton(title: String, onClick: @escaping (OpaquePointer?) -> Void) -> OpaquePointer {
-        let button = title.withCString { codexbar_linux_button_new($0) }
+    private func makeButton(title: String, onClick: @escaping (LinuxWidgetPtr?) -> Void) -> LinuxWidgetPtr {
+        let button = requireValue(title.withCString { codexbar_linux_button_new($0) }, "Failed to create button.")
         let handler = LinuxWidgetHandlerBox(handle: onClick)
         self.retainedHandlers.append(handler)
         codexbar_linux_button_on_clicked(button, codexbarLinuxWidgetCallback, Unmanaged.passUnretained(handler).toOpaque())
         return button
     }
 
-    private func makeLabel(text: String, xalign: Float, wrap: Bool, cssClasses: [String]) -> OpaquePointer {
-        let label = text.withCString { codexbar_linux_label_new($0) }
+    private func makeLabel(text: String, xalign: Float, wrap: Bool, cssClasses: [String]) -> LinuxWidgetPtr {
+        let label = requireValue(text.withCString { codexbar_linux_label_new($0) }, "Failed to create label.")
         codexbar_linux_label_set_xalign(label, xalign)
         codexbar_linux_label_set_wrap(label, wrap ? 1 : 0)
         for className in cssClasses {
@@ -582,7 +591,7 @@ private final class LinuxWindowController {
         return label
     }
 
-    private func setLabelText(_ label: OpaquePointer, _ text: String) {
+    private func setLabelText(_ label: LinuxWidgetPtr, _ text: String) {
         text.withCString { codexbar_linux_label_set_text(label, $0) }
     }
 }
