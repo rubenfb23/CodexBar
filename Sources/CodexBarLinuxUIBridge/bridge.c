@@ -267,22 +267,33 @@ gboolean codexbar_linux_widget_get_visible(GtkWidget *widget) {
 }
 
 void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *css_color) {
+    /* Use a unique widget name so the display-scoped CSS provider targets only this widget.
+     * gtk_style_context_add_provider (per-widget) was removed in GTK 4.10; the non-deprecated
+     * path is gtk_style_context_add_provider_for_display scoped by widget name selector. */
+    static guint color_widget_counter = 0;
+    gchar *widget_name = g_strdup_printf("codexbar-colored-%u", ++color_widget_counter);
+    gtk_widget_set_name(widget, widget_name);
+
     GtkCssProvider *provider = gtk_css_provider_new();
     gchar *css = g_strdup_printf(
-        "* { background-color: %s; border-radius: 4px; min-width: 18px; min-height: 18px; }",
-        css_color);
+        "#%s { background-color: %s; border-radius: 4px; min-width: 18px; min-height: 18px; }",
+        widget_name, css_color);
+    g_free(widget_name);
     gtk_css_provider_load_from_string(provider, css);
     g_free(css);
-    gtk_style_context_add_provider(
-        gtk_widget_get_style_context(widget),
+    gtk_style_context_add_provider_for_display(
+        gdk_display_get_default(),
         GTK_STYLE_PROVIDER(provider),
         GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     g_object_unref(provider);
 }
 
 GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int size) {
+    /* gtk_image_new_from_resource never returns NULL in GTK4 — on a missing path it
+     * returns a valid but empty GtkImage and logs a GLib critical warning. Callers
+     * must verify the resource path is registered (e.g. via g_resources_lookup_data)
+     * before calling this function if they need to detect missing icons. */
     GtkWidget *image = gtk_image_new_from_resource(resource_path);
-    if (image == NULL) return NULL;
     gtk_image_set_pixel_size(GTK_IMAGE(image), size);
     return image;
 }
