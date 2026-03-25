@@ -101,3 +101,5 @@ void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *c
 
 /* Icon loaded from a GResource path at the given pixel size */
 GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int size);
+
+#include "CodexBarLinuxSNIBridge.h"
