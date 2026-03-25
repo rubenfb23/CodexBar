@@ -195,6 +195,8 @@ public enum LinuxDashboardPresenter {
         if payload.error != nil { return .incident }
         guard let indicator = payload.status?.indicator else { return nil }
         switch indicator {
+        // .maintenance and .unknown are treated as operational — the provider is
+        // not reporting an active incident, so the UI shows green rather than yellow.
         case .none, .maintenance, .unknown:
             return .operational
         case .minor:

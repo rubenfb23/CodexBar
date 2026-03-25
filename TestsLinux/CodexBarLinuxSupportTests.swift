@@ -704,4 +704,36 @@ struct CodexBarLinuxSupportTests {
 
         #expect(snapshot.cards[0].statusLevel == nil)
     }
+
+    @Test
+    func presenterSetsDegradedStatusLevelForMinorIndicator() {
+        let payload = LinuxProviderPayload(
+            provider: "codex", account: nil, version: nil, source: "cli",
+            status: LinuxProviderStatusPayload(
+                indicator: .minor,
+                description: nil, updatedAt: nil, url: nil),
+            usage: nil, credits: nil, openaiDashboard: nil, error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload], cliBinaryPath: "/tmp/cli",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards[0].statusLevel == .degraded)
+    }
+
+    @Test
+    func presenterSetsIncidentStatusLevelForMajorIndicator() {
+        let payload = LinuxProviderPayload(
+            provider: "codex", account: nil, version: nil, source: "cli",
+            status: LinuxProviderStatusPayload(
+                indicator: .major,
+                description: nil, updatedAt: nil, url: nil),
+            usage: nil, credits: nil, openaiDashboard: nil, error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload], cliBinaryPath: "/tmp/cli",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards[0].statusLevel == .incident)
+    }
 }
