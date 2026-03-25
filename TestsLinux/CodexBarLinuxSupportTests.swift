@@ -661,4 +661,47 @@ struct CodexBarLinuxSupportTests {
         #expect(LinuxRefreshFrequency.fiveMinutes.seconds == 300)
         #expect(LinuxRefreshFrequency.thirtyMinutes.seconds == 1_800)
     }
+
+    @Test
+    func presenterSetsOperationalStatusLevelFromIndicator() {
+        let payload = LinuxProviderPayload(
+            provider: "codex", account: nil, version: nil, source: "cli",
+            status: LinuxProviderStatusPayload(
+                indicator: .none,
+                description: nil, updatedAt: nil, url: nil),
+            usage: nil, credits: nil, openaiDashboard: nil, error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload], cliBinaryPath: "/tmp/cli",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards[0].statusLevel == .operational)
+    }
+
+    @Test
+    func presenterSetsIncidentStatusLevelWhenErrorPresent() {
+        let payload = LinuxProviderPayload(
+            provider: "claude", account: nil, version: nil, source: "api",
+            status: nil, usage: nil, credits: nil, openaiDashboard: nil,
+            error: LinuxProviderErrorPayload(code: 1, message: "Bad token", kind: .provider))
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload], cliBinaryPath: "/tmp/cli",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards[0].statusLevel == .incident)
+    }
+
+    @Test
+    func presenterSetsNilStatusLevelWhenNoStatusData() {
+        let payload = LinuxProviderPayload(
+            provider: "codex", account: nil, version: nil, source: "cli",
+            status: nil, usage: nil, credits: nil, openaiDashboard: nil, error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload], cliBinaryPath: "/tmp/cli",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards[0].statusLevel == nil)
+    }
 }

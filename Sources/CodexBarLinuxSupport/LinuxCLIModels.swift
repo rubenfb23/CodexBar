@@ -39,9 +39,9 @@ public struct LinuxProviderStatusPayload: Codable, Sendable {
     public let indicator: Indicator
     public let description: String?
     public let updatedAt: Date?
-    public let url: String
+    public let url: String?
 
-    public init(indicator: Indicator, description: String?, updatedAt: Date?, url: String) {
+    public init(indicator: Indicator, description: String?, updatedAt: Date?, url: String?) {
         self.indicator = indicator
         self.description = description
         self.updatedAt = updatedAt

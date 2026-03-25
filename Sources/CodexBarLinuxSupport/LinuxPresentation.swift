@@ -1,6 +1,12 @@
 import CodexBarCore
 import Foundation
 
+public enum LinuxStatusLevel: Sendable, Equatable {
+    case operational   // green
+    case degraded      // yellow
+    case incident      // red
+}
+
 public struct LinuxDashboardSnapshot: Sendable {
     public let refreshedAt: Date
     public let cliBinaryPath: String
@@ -40,6 +46,7 @@ public struct LinuxProviderCard: Sendable {
     public let metadataLine: String?
     public let footerLine: String?
     public let errorMessage: String?
+    public let statusLevel: LinuxStatusLevel?
     public let usageBars: [LinuxUsageBar]
 
     public init(
@@ -50,6 +57,7 @@ public struct LinuxProviderCard: Sendable {
         metadataLine: String?,
         footerLine: String?,
         errorMessage: String?,
+        statusLevel: LinuxStatusLevel?,
         usageBars: [LinuxUsageBar])
     {
         self.providerID = providerID
@@ -59,6 +67,7 @@ public struct LinuxProviderCard: Sendable {
         self.metadataLine = metadataLine
         self.footerLine = footerLine
         self.errorMessage = errorMessage
+        self.statusLevel = statusLevel
         self.usageBars = usageBars
     }
 }
@@ -123,6 +132,7 @@ public enum LinuxDashboardPresenter {
             metadataLine: metadataLine,
             footerLine: footerLine,
             errorMessage: errorMessage,
+            statusLevel: self.statusLevel(for: payload),
             usageBars: usageBars)
     }
 
@@ -179,6 +189,19 @@ public enum LinuxDashboardPresenter {
         let resetText = UsageFormatter.resetLine(for: window, style: options.resetTimeDisplayStyle) ?? "Reset unavailable"
         let detail = "\(usageText) | \(resetText)"
         return LinuxUsageBar(title: title, fractionFilled: fillPercent / 100, detail: detail)
+    }
+
+    private static func statusLevel(for payload: LinuxProviderPayload) -> LinuxStatusLevel? {
+        if payload.error != nil { return .incident }
+        guard let indicator = payload.status?.indicator else { return nil }
+        switch indicator {
+        case .none, .maintenance, .unknown:
+            return .operational
+        case .minor:
+            return .degraded
+        case .major, .critical:
+            return .incident
+        }
     }
 
     private static func statusLine(for payload: LinuxProviderPayload) -> String {
