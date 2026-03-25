@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/com/steipete/codexbar/icons">
+    <file preprocess="xml-stripblanks">claude.svg</file>
+    <file preprocess="xml-stripblanks">copilot.svg</file>
+    <file preprocess="xml-stripblanks">cursor.svg</file>
+    <file preprocess="xml-stripblanks">jetbrains.svg</file>
+    <file preprocess="xml-stripblanks">openrouter.svg</file>
+  </gresource>
+</gresources>
