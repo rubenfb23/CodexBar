@@ -77,3 +77,26 @@ void codexbar_linux_source_remove(guint source_id);
 void codexbar_linux_main_context_invoke(
     CodexBarLinuxMainThreadCallback callback,
     void *user_data);
+
+/* Plain undecorated GtkWindow (for the compact popup and context menu) */
+GtkWindow *codexbar_linux_plain_window_new(void);
+void codexbar_linux_plain_window_move(GtkWindow *window, int x, int y);
+void codexbar_linux_plain_window_present(GtkWindow *window);
+void codexbar_linux_plain_window_hide(GtkWindow *window);
+void codexbar_linux_window_set_decorated(GtkWindow *window, gboolean decorated);
+void codexbar_linux_window_set_skip_taskbar(GtkWindow *window, gboolean skip);
+void codexbar_linux_window_set_keep_above(GtkWindow *window, gboolean keep_above);
+
+/* Set the root child of a plain GtkWindow (equivalent to adw_application_window_set_content) */
+void codexbar_linux_plain_window_set_child(GtkWindow *window, GtkWidget *child);
+
+/* Widget visibility — used to toggle the popup window */
+void codexbar_linux_widget_set_visible(GtkWidget *widget, gboolean visible);
+gboolean codexbar_linux_widget_get_visible(GtkWidget *widget);
+
+/* Apply an inline background color (hex, e.g. "#CC785C") and border-radius to a widget.
+   Uses a per-widget GtkCssProvider — call once per widget. */
+void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *css_color);
+
+/* Icon loaded from a GResource path at the given pixel size */
+GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int size);

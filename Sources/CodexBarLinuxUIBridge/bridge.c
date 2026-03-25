@@ -216,3 +216,73 @@ void codexbar_linux_main_context_invoke(
     invocation->user_data = user_data;
     g_main_context_invoke(NULL, codexbar_linux_main_context_trampoline, invocation);
 }
+
+GtkWindow *codexbar_linux_plain_window_new(void) {
+    GtkWidget *window = gtk_window_new();
+    gtk_window_set_decorated(GTK_WINDOW(window), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(window), FALSE);
+    return GTK_WINDOW(window);
+}
+
+void codexbar_linux_plain_window_move(GtkWindow *window, int x, int y) {
+    /* gtk_window_move was removed in GTK4; positioning is compositor-controlled.
+       Callers should position via display geometry hints or startup notification. */
+    (void)window; (void)x; (void)y;
+}
+
+void codexbar_linux_plain_window_present(GtkWindow *window) {
+    gtk_window_present(window);
+}
+
+void codexbar_linux_plain_window_hide(GtkWindow *window) {
+    gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+}
+
+void codexbar_linux_plain_window_set_child(GtkWindow *window, GtkWidget *child) {
+    gtk_window_set_child(window, child);
+}
+
+void codexbar_linux_window_set_decorated(GtkWindow *window, gboolean decorated) {
+    gtk_window_set_decorated(window, decorated);
+}
+
+void codexbar_linux_window_set_skip_taskbar(GtkWindow *window, gboolean skip) {
+    /* gtk_window_set_skip_taskbar_hint was removed in GTK4; no direct replacement.
+       Taskbar exclusion is now handled by the compositor based on window type. */
+    (void)window; (void)skip;
+}
+
+void codexbar_linux_window_set_keep_above(GtkWindow *window, gboolean keep_above) {
+    /* gtk_window_set_keep_above was removed in GTK4; no direct replacement.
+       Always-on-top is now a compositor-level policy outside GTK's control. */
+    (void)window; (void)keep_above;
+}
+
+void codexbar_linux_widget_set_visible(GtkWidget *widget, gboolean visible) {
+    gtk_widget_set_visible(widget, visible);
+}
+
+gboolean codexbar_linux_widget_get_visible(GtkWidget *widget) {
+    return gtk_widget_get_visible(widget);
+}
+
+void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *css_color) {
+    GtkCssProvider *provider = gtk_css_provider_new();
+    gchar *css = g_strdup_printf(
+        "* { background-color: %s; border-radius: 4px; min-width: 18px; min-height: 18px; }",
+        css_color);
+    gtk_css_provider_load_from_string(provider, css);
+    g_free(css);
+    gtk_style_context_add_provider(
+        gtk_widget_get_style_context(widget),
+        GTK_STYLE_PROVIDER(provider),
+        GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(provider);
+}
+
+GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int size) {
+    GtkWidget *image = gtk_image_new_from_resource(resource_path);
+    if (image == NULL) return NULL;
+    gtk_image_set_pixel_size(GTK_IMAGE(image), size);
+    return image;
+}
