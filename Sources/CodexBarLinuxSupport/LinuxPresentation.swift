@@ -87,7 +87,8 @@ public enum LinuxDashboardPresenter {
         let title = self.friendlyProviderName(for: payload.provider)
         let account = self.accountLabel(for: payload, hidePersonalInfo: hidePersonalInfo)
         let plan = self.planLabel(for: payload)
-        let subtitle = [account, plan].compactMap { $0 }.joined(separator: " | ").nilIfEmpty ?? "No account metadata"
+        let subtitle = [account, plan].compactMap { $0 }.joined(separator: " | ").nilIfEmpty
+            ?? self.fallbackSubtitle(for: payload)
         let usageBars = self.usageBars(for: payload)
         let metadataLine = self.metadataLine(for: payload)
         let footerLine = self.footerLine(for: payload)
@@ -192,6 +193,37 @@ public enum LinuxDashboardPresenter {
     private static func planLabel(for payload: LinuxProviderPayload) -> String? {
         payload.usage?.identity?.loginMethod
             ?? payload.openaiDashboard?.accountPlan
+    }
+
+    private static func fallbackSubtitle(for payload: LinuxProviderPayload) -> String {
+        if payload.error == nil {
+            return "Connected via \(self.sourceDisplayName(payload.source))"
+        }
+        return "No account metadata"
+    }
+
+    private static func sourceDisplayName(_ source: String) -> String {
+        switch source.lowercased() {
+        case "oauth":
+            return "OAuth"
+        case "cli":
+            return "CLI"
+        case "codex-cli":
+            return "Codex CLI"
+        case "api":
+            return "API"
+        case "web":
+            return "Web"
+        case "auto":
+            return "Auto"
+        default:
+            return source
+                .split(separator: "-")
+                .map { part in
+                    part.prefix(1).uppercased() + String(part.dropFirst())
+                }
+                .joined(separator: " ")
+        }
     }
 
     private static func friendlyProviderName(for providerID: String) -> String {

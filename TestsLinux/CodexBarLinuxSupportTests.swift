@@ -137,6 +137,36 @@ struct CodexBarLinuxSupportTests {
     }
 
     @Test
+    func presenterUsesConnectedViaFallbackWhenIdentityIsMissing() {
+        let payload = LinuxProviderPayload(
+            provider: "claude",
+            account: nil,
+            version: nil,
+            source: "oauth",
+            status: nil,
+            usage: UsageSnapshot(
+                primary: nil,
+                secondary: nil,
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                identity: ProviderIdentitySnapshot(
+                    providerID: .claude,
+                    accountEmail: nil,
+                    accountOrganization: nil,
+                    loginMethod: nil)),
+            credits: nil,
+            openaiDashboard: nil,
+            error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload],
+            cliBinaryPath: "/tmp/CodexBarCLI",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.cards[0].subtitle == "Connected via OAuth")
+    }
+
+    @Test
     func preferencesPresenterReflectsConfigOrderAndState() {
         let config = CodexBarConfig(
             providers: [
