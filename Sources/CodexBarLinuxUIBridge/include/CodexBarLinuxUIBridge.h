@@ -94,8 +94,9 @@ void codexbar_linux_plain_window_set_child(GtkWindow *window, GtkWidget *child);
 void codexbar_linux_widget_set_visible(GtkWidget *widget, gboolean visible);
 gboolean codexbar_linux_widget_get_visible(GtkWidget *widget);
 
-/* Apply an inline background color (hex, e.g. "#CC785C") and border-radius to a widget.
-   Uses a per-widget GtkCssProvider — call once per widget. */
+/* Apply an inline background color (valid CSS color, e.g. "#CC785C") and border-radius to a widget.
+   Registers a display-scoped GtkCssProvider keyed by a unique widget name selector.
+   Call at most once per widget; css_color must be a valid CSS color value. */
 void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *css_color);
 
 /* Icon loaded from a GResource path at the given pixel size */

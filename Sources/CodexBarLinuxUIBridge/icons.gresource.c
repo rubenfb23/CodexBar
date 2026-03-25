@@ -9,7 +9,7 @@
  *
  * Providers whose icon slug does not exist in Simple Icons (openai, opencode)
  * are intentionally absent. callers of codexbar_linux_image_from_resource()
- * handle a NULL return by falling back to an initial-letter label.
+ * detect missing resources by calling g_resources_lookup_data() before requesting an image.
  */
 #include <gio/gio.h>
 
