@@ -1,5 +1,5 @@
 import CodexBarCore
-import CodexBarLinuxSupport
+@testable import CodexBarLinuxSupport
 import Foundation
 import Testing
 
@@ -153,5 +153,71 @@ struct CodexBarLinuxSupportTests {
         #expect(rows[1].provider == .codex)
         #expect(rows[1].enabled == false)
         #expect(rows[1].source == "cli")
+    }
+
+    @Test
+    func backendExtractsMultipleJSONArraySegments() {
+        let stdout = """
+        [
+          {
+            "provider": "codex",
+            "source": "cli"
+          }
+        ]
+        [
+          {
+            "provider": "cli",
+            "source": "cli",
+            "error": {
+              "code": 1,
+              "message": "Error",
+              "kind": "provider"
+            }
+          }
+        ]
+        """
+
+        let segments = LinuxCLIBackend.extractJSONArraySegments(from: stdout)
+
+        #expect(segments.count == 2)
+        #expect(segments[0].contains("\"provider\": \"codex\""))
+        #expect(segments[1].contains("\"provider\": \"cli\""))
+    }
+
+    @Test
+    func backendDecodesProviderPayloadsAndDropsGenericCLIPayload() throws {
+        let stdout = """
+        [
+          {
+            "provider": "codex",
+            "source": "auto",
+            "error": {
+              "code": 1,
+              "message": "Provider failed",
+              "kind": "provider"
+            }
+          },
+          {
+            "provider": "claude",
+            "source": "auto"
+          }
+        ]
+        [
+          {
+            "provider": "cli",
+            "source": "cli",
+            "error": {
+              "code": 1,
+              "message": "Error",
+              "kind": "provider"
+            }
+          }
+        ]
+        """
+
+        let payloads = try LinuxCLIBackend.decodePayloadsFromCLIStdout(stdout)
+
+        #expect(payloads.count == 2)
+        #expect(payloads.map(\.provider) == ["codex", "claude"])
     }
 }

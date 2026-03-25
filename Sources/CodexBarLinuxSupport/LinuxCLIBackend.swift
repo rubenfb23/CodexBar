@@ -79,6 +79,7 @@ public struct LinuxCLIBackend: Sendable {
             arguments: [
                 "usage",
                 "--format", "json",
+                "--json-only",
                 "--pretty",
                 "--status",
                 "--provider", "all",
@@ -148,14 +149,85 @@ public struct LinuxCLIBackend: Sendable {
         try self.preferencesStore.save(preferences)
     }
 
-    private func decodePayloads(from stdout: String) throws -> [LinuxProviderPayload] {
+    static func decodePayloadsFromCLIStdout(_ stdout: String) throws -> [LinuxProviderPayload] {
+        let segments = self.extractJSONArraySegments(from: stdout)
+        guard !segments.isEmpty else {
+            throw LinuxCLIBackendError.decodeFailed("No JSON array payload found in CLI stdout.")
+        }
+
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        do {
-            return try decoder.decode([LinuxProviderPayload].self, from: Data(stdout.utf8))
-        } catch {
-            throw LinuxCLIBackendError.decodeFailed(error.localizedDescription)
+
+        var payloads: [LinuxProviderPayload] = []
+        for segment in segments {
+            do {
+                let decoded = try decoder.decode([LinuxProviderPayload].self, from: Data(segment.utf8))
+                payloads.append(contentsOf: decoded)
+            } catch {
+                throw LinuxCLIBackendError.decodeFailed(error.localizedDescription)
+            }
         }
+
+        let providerPayloads = payloads.filter { $0.provider != "cli" }
+        if !providerPayloads.isEmpty {
+            return providerPayloads
+        }
+        return payloads
+    }
+
+    private func decodePayloads(from stdout: String) throws -> [LinuxProviderPayload] {
+        try Self.decodePayloadsFromCLIStdout(stdout)
+    }
+
+    static func extractJSONArraySegments(from text: String) -> [String] {
+        var segments: [String] = []
+        var startIndex: String.Index?
+        var depth = 0
+        var isInsideString = false
+        var isEscaping = false
+
+        for index in text.indices {
+            let character = text[index]
+
+            if isInsideString {
+                if isEscaping {
+                    isEscaping = false
+                    continue
+                }
+                if character == "\\" {
+                    isEscaping = true
+                } else if character == "\"" {
+                    isInsideString = false
+                }
+                continue
+            }
+
+            if character == "\"" {
+                isInsideString = true
+                continue
+            }
+
+            if character == "[" {
+                if depth == 0 {
+                    startIndex = index
+                }
+                depth += 1
+                continue
+            }
+
+            if character == "]", depth > 0 {
+                depth -= 1
+                if depth == 0, let segmentStartIndex = startIndex {
+                    let nextIndex = text.index(after: index)
+                    segments.append(String(text[segmentStartIndex..<nextIndex]))
+                    startIndex = nil
+                    isInsideString = false
+                    isEscaping = false
+                }
+            }
+        }
+
+        return segments
     }
 
     private func resolveCLIBinaryPath() throws -> String {
