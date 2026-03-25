@@ -468,7 +468,11 @@ private final class LinuxWindowController: @unchecked Sendable {
 
         let cadenceButtons = codexbar_linux_box_new_horizontal(8)
         for frequency in LinuxRefreshFrequency.allCases {
-            codexbar_linux_box_append(cadenceButtons, self.makeButton(title: frequency.label) { [weak self] _ in
+            let isSelected = frequency == self.preferences.refreshFrequency
+            codexbar_linux_box_append(cadenceButtons, self.makeButton(
+                title: frequency.label,
+                cssClasses: isSelected ? ["suggested-action"] : ["flat"])
+            { [weak self] _ in
                 self?.setRefreshFrequency(frequency)
             })
         }
@@ -684,8 +688,15 @@ private final class LinuxWindowController: @unchecked Sendable {
         return button
     }
 
-    private func makeButton(title: String, onClick: @escaping (LinuxWidgetPtr?) -> Void) -> LinuxWidgetPtr {
+    private func makeButton(
+        title: String,
+        cssClasses: [String] = [],
+        onClick: @escaping (LinuxWidgetPtr?) -> Void) -> LinuxWidgetPtr
+    {
         let button = requireValue(title.withCString { codexbar_linux_button_new($0) }, "Failed to create button.")
+        for className in cssClasses {
+            className.withCString { codexbar_linux_widget_add_css_class(button, $0) }
+        }
         let handler = LinuxWidgetHandlerBox(handle: onClick)
         self.retainedHandlers.append(handler)
         codexbar_linux_button_on_clicked(button, codexbarLinuxWidgetCallback, Unmanaged.passUnretained(handler).toOpaque())
