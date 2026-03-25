@@ -12,6 +12,8 @@ read_when:
 - `Sources/CodexBar`: state + UI (UsageStore, SettingsStore, StatusItemController, menus, icon rendering).
 - `Sources/CodexBarWidget`: WidgetKit extension wired to the shared snapshot.
 - `Sources/CodexBarCLI`: bundled CLI for `codexbar` usage/status output.
+- `Sources/CodexBarLinuxSupport`: Linux window backend/presentation models fed by the CLI JSON payload.
+- `Sources/CodexBarLinux`: native Ubuntu GTK4/libadwaita window target.
 - `Sources/CodexBarMacros`: SwiftSyntax macros for provider registration.
 - `Sources/CodexBarMacroSupport`: shared macro support used by app/core/CLI targets.
 - `Sources/CodexBarClaudeWatchdog`: helper process for stable Claude CLI PTY sessions.
@@ -20,10 +22,12 @@ read_when:
 ## Entry points
 - `CodexBarApp`: SwiftUI keepalive + Settings scene.
 - `AppDelegate`: wires status controller, Sparkle updater, notifications.
+- `CodexBarLinuxApp`: libadwaita window that shells out to `CodexBarCLI` and renders provider cards.
 
 ## Data flow
 - Background refresh → `UsageFetcher`/provider probes → `UsageStore` → menu/icon/widgets.
 - Settings toggles feed `SettingsStore` → `UsageStore` refresh cadence + feature flags.
+- On Ubuntu: `CodexBarLinux` → `CodexBarCLI --format json` → `CodexBarLinuxSupport` → GTK/libadwaita cards.
 
 ## Concurrency & platform
 - Swift 6 strict concurrency enabled; prefer Sendable state and explicit MainActor hops.

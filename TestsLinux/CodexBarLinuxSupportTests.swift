@@ -1,0 +1,107 @@
+import CodexBarCore
+import CodexBarLinuxSupport
+import Foundation
+import Testing
+
+@Suite
+struct CodexBarLinuxSupportTests {
+    @Test
+    func presenterBuildsCardsFromCLIJSONShape() {
+        let payloads = [
+            LinuxProviderPayload(
+                provider: "codex",
+                account: nil,
+                version: "1.2.3",
+                source: "cli",
+                status: LinuxProviderStatusPayload(
+                    indicator: .none,
+                    description: "All systems operational",
+                    updatedAt: nil,
+                    url: "https://status.openai.com"),
+                usage: UsageSnapshot(
+                    primary: RateWindow(
+                        usedPercent: 28,
+                        windowMinutes: 300,
+                        resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                        resetDescription: nil),
+                    secondary: nil,
+                    updatedAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    identity: ProviderIdentitySnapshot(
+                        providerID: .codex,
+                        accountEmail: "ruben@example.com",
+                        accountOrganization: nil,
+                        loginMethod: "Pro")),
+                credits: CreditsSnapshot(
+                    remaining: 41.5,
+                    events: [],
+                    updatedAt: Date(timeIntervalSince1970: 1_750_000_000)),
+                openaiDashboard: nil,
+                error: nil),
+            LinuxProviderPayload(
+                provider: "claude",
+                account: nil,
+                version: nil,
+                source: "api",
+                status: nil,
+                usage: nil,
+                credits: nil,
+                openaiDashboard: nil,
+                error: LinuxProviderErrorPayload(code: 1, message: "Missing token", kind: .provider)),
+        ]
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: payloads,
+            cliBinaryPath: "/tmp/CodexBarCLI",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards.count == 2)
+        #expect(snapshot.cards[0].title == "Claude")
+        #expect(snapshot.cards[0].errorMessage == "Missing token")
+        #expect(snapshot.cards[1].title == "Codex")
+        #expect(snapshot.cards[1].subtitle.contains("ruben@example.com"))
+        #expect(snapshot.cards[1].subtitle.contains("Pro"))
+        #expect(snapshot.cards[1].usageBars.count == 1)
+        #expect(snapshot.cards[1].footerLine?.contains("41.5") == true)
+        #expect(LinuxDashboardPresenter.refreshSubtitle(for: snapshot).contains("/tmp/CodexBarCLI"))
+    }
+
+    @Test
+    func presenterAddsCodeReviewWindowWhenDashboardDataExists() {
+        let payload = LinuxProviderPayload(
+            provider: "codex",
+            account: nil,
+            version: nil,
+            source: "web",
+            status: nil,
+            usage: nil,
+            credits: nil,
+            openaiDashboard: OpenAIDashboardSnapshot(
+                signedInEmail: "ruben@example.com",
+                codeReviewRemainingPercent: 72,
+                codeReviewLimit: RateWindow(
+                    usedPercent: 28,
+                    windowMinutes: 1_440,
+                    resetsAt: Date(timeIntervalSince1970: 1_750_000_000),
+                    resetDescription: nil),
+                creditEvents: [],
+                dailyBreakdown: [],
+                usageBreakdown: [],
+                creditsPurchaseURL: nil,
+                primaryLimit: nil,
+                secondaryLimit: nil,
+                creditsRemaining: 10,
+                accountPlan: "Plus",
+                updatedAt: Date(timeIntervalSince1970: 1_750_000_000)),
+            error: nil)
+
+        let snapshot = LinuxDashboardPresenter.makeSnapshot(
+            from: [payload],
+            cliBinaryPath: "/tmp/CodexBarCLI",
+            refreshedAt: Date(timeIntervalSince1970: 1_750_000_000))
+
+        #expect(snapshot.cards.count == 1)
+        #expect(snapshot.cards[0].usageBars.count == 1)
+        #expect(snapshot.cards[0].usageBars[0].title == "Code review")
+        #expect(snapshot.cards[0].footerLine?.contains("10") == true)
+    }
+}

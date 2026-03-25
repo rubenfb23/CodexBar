@@ -58,15 +58,57 @@ let package = Package(
                 swiftSettings: [
                     .enableUpcomingFeature("StrictConcurrency"),
                 ]),
+            .target(
+                name: "CodexBarLinuxSupport",
+                dependencies: [
+                    "CodexBarCore",
+                ],
+                path: "Sources/CodexBarLinuxSupport",
+                swiftSettings: [
+                    .enableUpcomingFeature("StrictConcurrency"),
+                ]),
             .testTarget(
                 name: "CodexBarLinuxTests",
-                dependencies: ["CodexBarCore", "CodexBarCLI"],
+                dependencies: ["CodexBarCore", "CodexBarCLI", "CodexBarLinuxSupport"],
                 path: "TestsLinux",
                 swiftSettings: [
                     .enableUpcomingFeature("StrictConcurrency"),
                     .enableExperimentalFeature("SwiftTesting"),
                 ]),
         ]
+
+        #if os(Linux)
+        targets.append(contentsOf: [
+            .systemLibrary(
+                name: "CAdwaita",
+                path: "Sources/CAdwaita",
+                pkgConfig: "libadwaita-1",
+                providers: [
+                    .apt([
+                        "libadwaita-1-dev",
+                        "libgtk-4-dev",
+                    ]),
+                ]),
+            .target(
+                name: "CodexBarLinuxUIBridge",
+                dependencies: ["CAdwaita"],
+                path: "Sources/CodexBarLinuxUIBridge",
+                publicHeadersPath: "include",
+                cSettings: [
+                    .headerSearchPath("include"),
+                ]),
+            .executableTarget(
+                name: "CodexBarLinux",
+                dependencies: [
+                    "CodexBarLinuxSupport",
+                    "CodexBarLinuxUIBridge",
+                ],
+                path: "Sources/CodexBarLinux",
+                swiftSettings: [
+                    .enableUpcomingFeature("StrictConcurrency"),
+                ]),
+        ])
+        #endif
 
         #if os(macOS)
         targets.append(contentsOf: [
