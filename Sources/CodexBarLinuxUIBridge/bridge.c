@@ -32,6 +32,10 @@ int codexbar_linux_application_run(AdwApplication *app) {
     return g_application_run(G_APPLICATION(app), 0, NULL);
 }
 
+void codexbar_linux_application_hold(AdwApplication *app) {
+    g_application_hold(G_APPLICATION(app));
+}
+
 AdwApplicationWindow *codexbar_linux_window_new(AdwApplication *app) {
     return ADW_APPLICATION_WINDOW(adw_application_window_new(GTK_APPLICATION(app)));
 }

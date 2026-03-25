@@ -16,6 +16,8 @@ void codexbar_linux_application_on_activate(
     CodexBarLinuxActivateCallback callback,
     void *user_data);
 int codexbar_linux_application_run(AdwApplication *app);
+/* Prevent GLib from auto-quitting when there are no open windows (tray-only mode). */
+void codexbar_linux_application_hold(AdwApplication *app);
 
 AdwApplicationWindow *codexbar_linux_window_new(AdwApplication *app);
 void codexbar_linux_window_set_title(AdwApplicationWindow *window, const char *title);

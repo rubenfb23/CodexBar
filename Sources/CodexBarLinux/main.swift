@@ -139,6 +139,8 @@ private final class LinuxWindowController: @unchecked Sendable {
             }
             if registered != 0 {
                 self.sniRegistered = true
+                // Prevent GLib from auto-quitting when there are no windows (tray-only mode).
+                codexbar_linux_application_hold(application)
             } else {
                 // SNI unavailable — fall back to showing preferences window directly
                 print("CodexBar: SNI registration failed, falling back to preferences window")
