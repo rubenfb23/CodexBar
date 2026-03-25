@@ -1,5 +1,11 @@
 import CodexBarCore
+import Dispatch
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#else
+import Glibc
+#endif
 
 public struct LinuxDashboardLoadResult: Sendable {
     public let cliBinaryPath: String
@@ -61,6 +67,8 @@ public enum LinuxCLIBackendError: LocalizedError {
 }
 
 public struct LinuxCLIBackend: Sendable {
+    private static let defaultProcessTimeoutSeconds: TimeInterval = 25
+
     public let environment: [String: String]
     public let configStore: CodexBarConfigStore
     public let preferencesStore: LinuxPreferencesStore
@@ -114,7 +122,8 @@ public struct LinuxCLIBackend: Sendable {
                 let command = try self.runProcess(
                     executablePath: cliBinaryPath,
                     arguments: Self.usageArguments(for: provider, sourceMode: sourceMode),
-                    label: "CodexBar Linux refresh (\(provider.rawValue), \(sourceMode.rawValue))")
+                    label: "CodexBar Linux refresh (\(provider.rawValue), \(sourceMode.rawValue))",
+                    timeout: self.processTimeoutSeconds())
                 let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 let decodedPayloads = trimmed.isEmpty ? [] : try self.decodePayloads(from: command.stdout)
 
@@ -186,7 +195,8 @@ public struct LinuxCLIBackend: Sendable {
         let command = try self.runProcess(
             executablePath: opener,
             arguments: [fileURL.path],
-            label: "Open CodexBar config")
+            label: "Open CodexBar config",
+            timeout: 5)
         if command.exitCode != 0 {
             throw LinuxCLIBackendError.commandFailed(
                 label: "Open CodexBar config",
@@ -405,10 +415,21 @@ public struct LinuxCLIBackend: Sendable {
         FileManager.default.isExecutableFile(atPath: path)
     }
 
+    private func processTimeoutSeconds() -> TimeInterval {
+        guard let raw = self.environment["CODEXBAR_LINUX_PROCESS_TIMEOUT"],
+              let value = TimeInterval(raw),
+              value > 0
+        else {
+            return Self.defaultProcessTimeoutSeconds
+        }
+        return value
+    }
+
     private func runProcess(
         executablePath: String,
         arguments: [String],
-        label: String) throws -> (stdout: String, stderr: String, exitCode: Int32)
+        label: String,
+        timeout: TimeInterval) throws -> (stdout: String, stderr: String, exitCode: Int32)
     {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
@@ -420,6 +441,10 @@ public struct LinuxCLIBackend: Sendable {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
         process.standardInput = nil
+        let exitSemaphore = DispatchSemaphore(value: 0)
+        process.terminationHandler = { _ in
+            exitSemaphore.signal()
+        }
 
         do {
             try process.run()
@@ -427,11 +452,33 @@ public struct LinuxCLIBackend: Sendable {
             throw LinuxCLIBackendError.launchFailed("\(label): \(error.localizedDescription)")
         }
 
-        process.waitUntilExit()
+        let didExit = exitSemaphore.wait(timeout: .now() + timeout) == .success
+        if !didExit, !Self.forceExit(process, exitSemaphore: exitSemaphore) {
+            return ("", "\(label) timed out after \(Int(timeout.rounded()))s.", 4)
+        }
         let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
         let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
         let stdout = String(data: stdoutData, encoding: .utf8) ?? ""
-        let stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        var stderr = String(data: stderrData, encoding: .utf8) ?? ""
+        if !didExit {
+            let timeoutMessage = "\(label) timed out after \(Int(timeout.rounded()))s."
+            stderr = stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? timeoutMessage
+                : "\(stderr)\n\(timeoutMessage)"
+        }
         return (stdout, stderr, process.terminationStatus)
+    }
+
+    private static func forceExit(_ process: Process, exitSemaphore: DispatchSemaphore) -> Bool {
+        guard process.isRunning else { return true }
+
+        process.terminate()
+        if exitSemaphore.wait(timeout: .now() + 0.5) == .success {
+            return true
+        }
+
+        guard process.isRunning else { return true }
+        kill(process.processIdentifier, SIGKILL)
+        return exitSemaphore.wait(timeout: .now() + 1.0) == .success
     }
 }

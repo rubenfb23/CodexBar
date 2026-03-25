@@ -554,6 +554,78 @@ struct CodexBarLinuxSupportTests {
     }
 
     @Test
+    func backendSkipsHungAttemptAndFallsThroughToNextSource() throws {
+        let tempDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDirectory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDirectory) }
+
+        let cliPath = tempDirectory.appendingPathComponent("CodexBarCLI")
+        let script = """
+        #!/bin/bash
+        source_mode=""
+        provider=""
+        while [[ $# -gt 0 ]]; do
+          case "$1" in
+            --source)
+              source_mode="$2"
+              shift 2
+              ;;
+            --provider)
+              provider="$2"
+              shift 2
+              ;;
+            *)
+              shift
+              ;;
+          esac
+        done
+        if [[ "$provider" == "claude" && "$source_mode" == "oauth" ]]; then
+          sleep 2
+          exit 0
+        fi
+        if [[ "$provider" == "claude" && "$source_mode" == "cli" ]]; then
+          cat <<'JSON'
+        [
+          {
+            "provider": "claude",
+            "source": "cli",
+            "usage": {
+              "updatedAt": "2026-03-25T16:00:00Z"
+            }
+          }
+        ]
+        JSON
+          exit 0
+        fi
+        echo '[]'
+        """
+        try Data(script.utf8).write(to: cliPath)
+        try FileManager.default.setAttributes([.posixPermissions: NSNumber(value: Int16(0o755))], ofItemAtPath: cliPath.path)
+
+        let configStore = CodexBarConfigStore(fileURL: tempDirectory.appendingPathComponent("config.json"))
+        try configStore.save(CodexBarConfig(providers: [
+            ProviderConfig(id: .claude, enabled: true),
+        ]))
+
+        let backend = LinuxCLIBackend(
+            environment: [
+                "PATH": "\(tempDirectory.path):/usr/bin:/bin",
+                "CODEXBAR_LINUX_CLI_BINARY": cliPath.path,
+                "CODEXBAR_LINUX_PROCESS_TIMEOUT": "0.2",
+            ],
+            configStore: configStore,
+            preferencesStore: LinuxPreferencesStore(fileURL: tempDirectory.appendingPathComponent("preferences.json")),
+            snapshotCacheStore: LinuxSnapshotCacheStore(fileURL: tempDirectory.appendingPathComponent("provider-cache.json")))
+
+        let result = try backend.fetchUsagePayloads()
+
+        #expect(result.payloads.count == 1)
+        #expect(result.payloads[0].provider == "claude")
+        #expect(result.payloads[0].source == "cli")
+        #expect(result.cachedProviderIDs.isEmpty)
+    }
+
+    @Test
     func backendDetectsSuccessfulPayloadForProvider() {
         let payloads = [
             LinuxProviderPayload(
