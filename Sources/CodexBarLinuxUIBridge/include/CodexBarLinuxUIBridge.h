@@ -1,6 +1,7 @@
 #pragma once
 
 #include <adwaita.h>
+#include "CodexBarLinuxSNIBridge.h"
 
 typedef void (*CodexBarLinuxActivateCallback)(AdwApplication *app, void *user_data);
 typedef void (*CodexBarLinuxWidgetCallback)(GtkWidget *widget, void *user_data);
@@ -101,5 +102,3 @@ void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *c
 
 /* Icon loaded from a GResource path at the given pixel size */
 GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int size);
-
-#include "CodexBarLinuxSNIBridge.h"

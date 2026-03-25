@@ -1,5 +1,4 @@
 #include "CodexBarLinuxSNIBridge.h"
-#include <gio/gio.h>
 #include <unistd.h>   /* getpid() */
 
 /* --- D-Bus introspection XML for org.kde.StatusNotifierItem --- */
@@ -119,8 +118,9 @@ static void on_name_acquired(GDBusConnection *conn, const gchar *name, gpointer 
 }
 
 static void on_name_lost(GDBusConnection *conn, const gchar *name, gpointer user_data) {
-    (void)conn; (void)name; (void)user_data;
-    /* StatusNotifierWatcher not present — tray icon invisible, app still runs */
+    (void)conn; (void)user_data;
+    /* StatusNotifierWatcher not present or name was stolen — tray icon invisible, app still runs */
+    g_warning("CodexBar SNI: lost bus name '%s' — tray icon will not be visible", name);
 }
 
 /* --- Public API --- */
@@ -131,6 +131,9 @@ gboolean codexbar_linux_sni_register(
     void *user_data,
     GError **error)
 {
+    /* Guard against double-registration (e.g. activate signal fired twice). */
+    if (g_sni.connection != NULL) return TRUE;
+
     GDBusConnection *conn = g_bus_get_sync(G_BUS_TYPE_SESSION, NULL, error);
     if (!conn) return FALSE;
 
