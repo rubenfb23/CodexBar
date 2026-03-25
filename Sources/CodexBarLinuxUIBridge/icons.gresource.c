@@ -1,3 +1,16 @@
+/* AUTO-GENERATED — do not edit by hand.
+ * Regenerate with:
+ *   bash Scripts/download-icons.sh
+ *   glib-compile-resources \
+ *     --sourcedir=Sources/CodexBarLinux/Resources/icons \
+ *     --generate-source \
+ *     --target=Sources/CodexBarLinuxUIBridge/icons.gresource.c \
+ *     Sources/CodexBarLinux/Resources/icons/icons.gresource.xml
+ *
+ * Providers whose icon slug does not exist in Simple Icons (openai, opencode)
+ * are intentionally absent. callers of codexbar_linux_image_from_resource()
+ * handle a NULL return by falling back to an initial-letter label.
+ */
 #include <gio/gio.h>
 
 #if defined (__ELF__) && ( __GNUC__ > 2 || (__GNUC__ == 2 && __GNUC_MINOR__ >= 6))
