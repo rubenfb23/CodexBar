@@ -10,6 +10,7 @@ private let appID = "com.steipete.codexbar.linux"
 private typealias LinuxAppPtr = UnsafeMutablePointer<AdwApplication>
 private typealias LinuxWindowPtr = UnsafeMutablePointer<AdwApplicationWindow>
 private typealias LinuxWidgetPtr = UnsafeMutablePointer<GtkWidget>
+private typealias LinuxPlainWindowPtr = UnsafeMutablePointer<GtkWindow>
 
 private func requireValue<T>(_ value: T?, _ message: String) -> T {
     guard let value else {
@@ -72,7 +73,6 @@ private final class LinuxWindowController: @unchecked Sendable {
     private let backend = LinuxCLIBackend()
     private var preferences: LinuxPreferences
     private var application: LinuxAppPtr?
-    private var window: LinuxWindowPtr?
     private var subtitleLabel: LinuxWidgetPtr?
     private var overviewBox: LinuxWidgetPtr?
     private var providersBox: LinuxWidgetPtr?
@@ -84,6 +84,13 @@ private final class LinuxWindowController: @unchecked Sendable {
     private var refreshSequence = 0
     private var refreshTimerID: UInt32 = 0
     private var refreshInFlight = false
+    // Compact popup (undecorated, persistent — built once and hidden)
+    private var popupWindow: LinuxPlainWindowPtr?
+    private var popupCardsBox: LinuxWidgetPtr?
+    private var popupHeaderTimestampLabel: LinuxWidgetPtr?
+    // Preferences window (the existing full tabbed window — built lazily)
+    private var preferencesWindow: LinuxWindowPtr?
+    private var sniRegistered = false
 
     init() {
         self.preferences = self.backend.loadPreferences()
@@ -101,11 +108,16 @@ private final class LinuxWindowController: @unchecked Sendable {
 
     func handleActivate(application: LinuxAppPtr?) {
         guard let application else { return }
-        if self.window == nil {
-            self.buildWindow(application: application)
+        // Build popup once
+        if self.popupWindow == nil {
+            self.buildAndHidePopup()
         }
-        if let window = self.window {
-            codexbar_linux_window_present(window)
+        // Build and show preferences window (kept for development — Task 6 replaces this)
+        if self.preferencesWindow == nil {
+            self.buildPreferencesWindow(application: application)
+        }
+        if let preferencesWindow = self.preferencesWindow {
+            codexbar_linux_window_present(preferencesWindow)
         }
         self.configureRefreshTimer()
         self.refresh()
@@ -192,6 +204,7 @@ private final class LinuxWindowController: @unchecked Sendable {
                 subtitle += " | Showing cached data for \(count) \(noun)."
             }
             self.setLabelText(subtitleLabel, subtitle)
+            self.updatePopupCards(snapshot: snapshot, options: options)
 
         case let .failure(error):
             self.renderRefreshError(error.localizedDescription)
@@ -255,9 +268,9 @@ private final class LinuxWindowController: @unchecked Sendable {
         self.refresh()
     }
 
-    private func buildWindow(application: LinuxAppPtr) {
+    private func buildPreferencesWindow(application: LinuxAppPtr) {
         let window = requireValue(codexbar_linux_window_new(application), "Failed to create application window.")
-        self.window = window
+        self.preferencesWindow = window
         "CodexBar Ubuntu".withCString { codexbar_linux_window_set_title(window, $0) }
         codexbar_linux_window_set_default_size(window, 1080, 780)
 
@@ -318,6 +331,185 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_box_append(root, stack)
 
         codexbar_linux_window_set_content(window, root)
+    }
+
+    private func buildAndHidePopup() {
+        let popupWindow = requireValue(
+            codexbar_linux_plain_window_new(),
+            "Failed to create popup window.")
+        self.popupWindow = popupWindow
+
+        codexbar_linux_window_set_keep_above(popupWindow, 1)
+        codexbar_linux_window_set_skip_taskbar(popupWindow, 1)
+
+        let root = requireValue(codexbar_linux_box_new_vertical(0), "Failed to create popup root.")
+
+        // --- Header ---
+        let header = requireValue(codexbar_linux_box_new_horizontal(0), "Failed to create popup header.")
+        codexbar_linux_widget_set_margin_all(header, 12)
+        let titleLabel = self.makeLabel(text: "CodexBar", xalign: 0, wrap: false, cssClasses: ["title-4"])
+        codexbar_linux_widget_set_hexpand(titleLabel, 1)
+        let timestampLabel = self.makeLabel(text: "", xalign: 1, wrap: false, cssClasses: ["dim-label"])
+        self.popupHeaderTimestampLabel = timestampLabel
+        codexbar_linux_box_append(header, titleLabel)
+        codexbar_linux_box_append(header, timestampLabel)
+        codexbar_linux_box_append(root, header)
+        codexbar_linux_box_append(root, requireValue(codexbar_linux_separator_new(), "sep"))
+
+        // --- Scrollable cards area ---
+        let scroll = requireValue(codexbar_linux_scrolled_window_new(), "Failed to create popup scroll.")
+        codexbar_linux_widget_set_vexpand(scroll, 1)
+        let cardsBox = requireValue(codexbar_linux_box_new_vertical(0), "Failed to create cards box.")
+        codexbar_linux_widget_set_margin_all(cardsBox, 8)
+        self.popupCardsBox = cardsBox
+        codexbar_linux_scrolled_window_set_child(scroll, cardsBox)
+        codexbar_linux_box_append(root, scroll)
+        codexbar_linux_box_append(root, requireValue(codexbar_linux_separator_new(), "sep"))
+
+        // --- Footer (icon buttons only) ---
+        let footer = requireValue(codexbar_linux_box_new_horizontal(4), "Failed to create popup footer.")
+        codexbar_linux_widget_set_margin_all(footer, 8)
+
+        let spacer = requireValue(codexbar_linux_box_new_horizontal(0), "Failed to create spacer.")
+        codexbar_linux_widget_set_hexpand(spacer, 1)
+        codexbar_linux_box_append(footer, spacer)
+
+        codexbar_linux_box_append(footer, self.makeButton(title: "⚙") { [weak self] _ in
+            self?.showPreferences()
+        })
+        codexbar_linux_box_append(footer, self.makeButton(title: "↻") { [weak self] _ in
+            self?.refresh()
+        })
+        codexbar_linux_box_append(footer, self.makeButton(title: "✕") { [weak self] _ in
+            guard let self, let application = self.application else { return }
+            g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
+        })
+        codexbar_linux_box_append(root, footer)
+
+        codexbar_linux_plain_window_set_child(popupWindow, root)
+        // Hide immediately — will be shown when tray icon is clicked
+        let popupWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(popupWindow))
+        codexbar_linux_widget_set_visible(popupWidget, 0)
+    }
+
+    private func showPreferences() {
+        guard let application else { return }
+        if self.preferencesWindow == nil {
+            self.buildPreferencesWindow(application: application)
+        }
+        if let preferencesWindow = self.preferencesWindow {
+            codexbar_linux_window_present(preferencesWindow)
+        }
+    }
+
+    private func updatePopupCards(snapshot: LinuxDashboardSnapshot, options: LinuxDashboardRenderOptions) {
+        guard let popupCardsBox, let popupHeaderTimestampLabel else { return }
+
+        // Update timestamp
+        let elapsed = Int(-snapshot.refreshedAt.timeIntervalSinceNow / 60)
+        let timestampText = elapsed < 1 ? "just now" : "↻ \(elapsed) min ago"
+        self.setLabelText(popupHeaderTimestampLabel, timestampText)
+
+        // Rebuild cards
+        codexbar_linux_box_remove_all(popupCardsBox)
+
+        if snapshot.cards.isEmpty {
+            let emptyLabel = self.makeLabel(
+                text: "No providers configured.",
+                xalign: 0.5, wrap: false, cssClasses: ["dim-label"])
+            codexbar_linux_widget_set_margin_all(emptyLabel, 16)
+            codexbar_linux_box_append(popupCardsBox, emptyLabel)
+            return
+        }
+
+        var isFirst = true
+        for card in snapshot.cards {
+            if !isFirst {
+                codexbar_linux_box_append(popupCardsBox, requireValue(codexbar_linux_separator_new(), "sep"))
+            }
+            isFirst = false
+            codexbar_linux_box_append(popupCardsBox, self.makePopupCard(card))
+        }
+    }
+
+    private func makePopupCard(_ card: LinuxProviderCard) -> LinuxWidgetPtr {
+        let cardBox = requireValue(codexbar_linux_box_new_vertical(6), "Failed to create card box.")
+        codexbar_linux_widget_set_margin_all(cardBox, 10)
+
+        // Title row: [logo] Name  ● Status
+        let titleRow = requireValue(codexbar_linux_box_new_horizontal(7), "Failed to create title row.")
+
+        let logoWidget = self.makeProviderLogo(providerID: card.providerID)
+        codexbar_linux_box_append(titleRow, logoWidget)
+
+        let nameLabel = self.makeLabel(text: card.title, xalign: 0, wrap: false, cssClasses: ["heading"])
+        codexbar_linux_widget_set_hexpand(nameLabel, 1)
+        codexbar_linux_box_append(titleRow, nameLabel)
+
+        if let statusLevel = card.statusLevel {
+            let statusCSSClass: String
+            switch statusLevel {
+            case .operational: statusCSSClass = "success"
+            case .degraded:    statusCSSClass = "warning"
+            case .incident:    statusCSSClass = "error"
+            }
+            let statusDot = self.makeLabel(text: "●", xalign: 1, wrap: false, cssClasses: [statusCSSClass])
+            codexbar_linux_box_append(titleRow, statusDot)
+        }
+        codexbar_linux_box_append(cardBox, titleRow)
+
+        // Usage bars
+        for bar in card.usageBars {
+            let barRow = requireValue(codexbar_linux_box_new_horizontal(6), "Failed to create bar row.")
+
+            let windowLabel = self.makeLabel(text: bar.title, xalign: 1, wrap: false, cssClasses: [])
+            codexbar_linux_box_append(barRow, windowLabel)
+
+            let progressBar = requireValue(codexbar_linux_progress_bar_new(), "Failed to create progress bar.")
+            codexbar_linux_widget_set_hexpand(progressBar, 1)
+            codexbar_linux_progress_bar_set_fraction(progressBar, bar.fractionFilled)
+            codexbar_linux_box_append(barRow, progressBar)
+
+            let pct = Int((bar.fractionFilled * 100).rounded())
+            let pctCSS = pct < 20 ? ["error"] : ["dim-label"]
+            let pctLabel = self.makeLabel(text: "\(pct)%", xalign: 1, wrap: false, cssClasses: pctCSS)
+            codexbar_linux_box_append(barRow, pctLabel)
+
+            codexbar_linux_box_append(cardBox, barRow)
+        }
+
+        if let errorMessage = card.errorMessage {
+            let errorLabel = self.makeLabel(text: errorMessage, xalign: 0, wrap: true, cssClasses: ["error"])
+            codexbar_linux_box_append(cardBox, errorLabel)
+        }
+
+        return cardBox
+    }
+
+    private func makeProviderLogo(providerID: String) -> LinuxWidgetPtr {
+        // Only include providers whose SVG is actually bundled in the GResource
+        // (openai/codex and opencode slugs don't exist in Simple Icons — they fall back)
+        let resourceMap: [String: (path: String, bgColor: String)] = [
+            "claude":    ("/com/steipete/codexbar/icons/claude.svg",    "#CC785C"),
+            "cursor":    ("/com/steipete/codexbar/icons/cursor.svg",    "#1C1C1E"),
+            "copilot":   ("/com/steipete/codexbar/icons/copilot.svg",   "#24292E"),
+            "openrouter":("/com/steipete/codexbar/icons/openrouter.svg","#6467F2"),
+            "jetbrains": ("/com/steipete/codexbar/icons/jetbrains.svg", "#000000"),
+        ]
+
+        if let entry = resourceMap[providerID] {
+            let imageWidget = entry.path.withCString { codexbar_linux_image_from_resource($0, 12) }
+            let container = requireValue(codexbar_linux_box_new_horizontal(0), "container")
+            entry.bgColor.withCString { codexbar_linux_widget_set_background_color(container, $0) }
+            if let imageWidget {
+                codexbar_linux_box_append(container, imageWidget)
+            }
+            return container
+        }
+
+        // Fallback: initial letter
+        let initial = String(providerID.prefix(1).uppercased())
+        return self.makeLabel(text: initial, xalign: 0.5, wrap: false, cssClasses: ["dim-label"])
     }
 
     private func configureRefreshTimer() {
