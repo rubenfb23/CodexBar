@@ -351,6 +351,51 @@ struct CodexBarLinuxSupportTests {
     }
 
     @Test
+    func backendKeepsFirstFailurePayloadWhenFallbackAlsoFails() {
+        let firstFailure = [
+            LinuxProviderPayload(
+                provider: "claude",
+                account: nil,
+                version: nil,
+                source: "oauth",
+                status: LinuxProviderStatusPayload(
+                    indicator: .minor,
+                    description: "Minor Service Outage",
+                    updatedAt: nil,
+                    url: "https://status.claude.com/"),
+                usage: nil,
+                credits: nil,
+                openaiDashboard: nil,
+                error: LinuxProviderErrorPayload(code: 3, message: "Rate limited. Please try again later.", kind: .provider)),
+        ]
+        let secondFailure = [
+            LinuxProviderPayload(
+                provider: "claude",
+                account: nil,
+                version: nil,
+                source: "cli",
+                status: nil,
+                usage: nil,
+                credits: nil,
+                openaiDashboard: nil,
+                error: LinuxProviderErrorPayload(code: 1, message: "Error", kind: .provider)),
+        ]
+
+        let resolved = [firstFailure, secondFailure].reduce(into: [LinuxProviderPayload]()) { chosen, candidate in
+            if chosen.isEmpty {
+                chosen = candidate
+            }
+            if LinuxCLIBackend.containsSuccessfulPayload(candidate, for: .claude) {
+                chosen = candidate
+            }
+        }
+
+        #expect(resolved.count == 1)
+        #expect(resolved[0].source == "oauth")
+        #expect(resolved[0].error?.message.contains("Rate limited") == true)
+    }
+
+    @Test
     func backendDetectsSuccessfulPayloadForProvider() {
         let payloads = [
             LinuxProviderPayload(

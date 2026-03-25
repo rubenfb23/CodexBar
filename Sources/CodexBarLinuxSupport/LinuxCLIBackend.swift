@@ -108,12 +108,18 @@ public struct LinuxCLIBackend: Sendable {
                 let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
                 let decodedPayloads = trimmed.isEmpty ? [] : try self.decodePayloads(from: command.stdout)
 
-                chosenPayloads = decodedPayloads
-                chosenStdout = command.stdout
-                chosenStderr = command.stderr
-                chosenExitCode = command.exitCode
+                if chosenPayloads.isEmpty {
+                    chosenPayloads = decodedPayloads
+                    chosenStdout = command.stdout
+                    chosenStderr = command.stderr
+                    chosenExitCode = command.exitCode
+                }
 
                 if Self.containsSuccessfulPayload(decodedPayloads, for: provider) {
+                    chosenPayloads = decodedPayloads
+                    chosenStdout = command.stdout
+                    chosenStderr = command.stderr
+                    chosenExitCode = command.exitCode
                     break
                 }
             }
