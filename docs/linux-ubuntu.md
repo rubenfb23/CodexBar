@@ -4,6 +4,7 @@ read_when:
   - Building the Linux GUI from source
   - Installing GTK/libadwaita dependencies on Ubuntu
   - Configuring provider tokens on Linux
+  - Setting up the Homebrew tap for Linux
 ---
 
 # Native Ubuntu app
@@ -14,15 +15,25 @@ This is not a direct port of the macOS menu bar app. The Linux app is a separate
 
 ## Requirements
 
-- Ubuntu 24.04 or newer
-- `libgtk-4-dev`
-- `libadwaita-1-dev`
-- `libx11-dev` (used for XWayland popup positioning)
-- `xdg-utils`
-- Swift 6.2.1 or newer
+- Ubuntu 24.04 or newer (or any Linux distro with GTK 4.6+)
+- GTK4, libadwaita, libX11 (installed automatically by either method below)
 - GNOME Shell with the [AppIndicator/KStatusNotifierItem](https://extensions.gnome.org/extension/615/appindicator-support/) extension (for the tray icon)
 
-## Install and run
+## Install via Homebrew (pre-built binary)
+
+Homebrew runs on Linux. This is the easiest way to install a pre-built binary without compiling from source.
+
+```bash
+brew tap rubenfb23/codexbar
+brew install codexbar-linux
+codexbar-linux
+```
+
+Homebrew will install the `gtk4`, `libadwaita`, and `libx11` runtime dependencies automatically.
+
+> **Tap repo**: create a GitHub repo named `homebrew-codexbar` and copy [`Formula/codexbar-linux.rb`](../Formula/codexbar-linux.rb) from this repo into it. Update the `sha256` and `version` fields after each release.
+
+## Install from source (install script)
 
 From the repo root:
 

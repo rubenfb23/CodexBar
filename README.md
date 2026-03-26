@@ -24,13 +24,24 @@ brew install steipete/tap/codexbar
 Or download `CodexBarCLI-v<tag>-linux-<arch>.tar.gz` from GitHub Releases.
 Linux support via Omarchy: community Waybar module and TUI, driven by the `codexbar` executable.
 
-### Ubuntu native window (from source)
-The repo also includes a native Ubuntu app target, `CodexBarLinux`, built with GTK4/libadwaita and backed by `CodexBarCLI` JSON. It now includes overview/providers/general/display/about pages so the structure starts matching the macOS app instead of just showing one dashboard view.
+### Ubuntu / Linux native app
 
+`CodexBarLinux` is a GTK4/libadwaita tray app backed by `CodexBarCLI` JSON, with overview, providers, preferences, and auto-refresh.
+
+**Via Homebrew (pre-built binary — easiest):**
+```bash
+brew tap rubenfb23/codexbar
+brew install codexbar-linux
+codexbar-linux
+```
+
+**Via install script (builds from source):**
 ```bash
 ./bin/install-codexbar-ubuntu-native.sh
 codexbar-linux
 ```
+
+Requires the [AppIndicator GNOME Shell extension](https://extensions.gnome.org/extension/615/appindicator-support/) for the system tray icon.
 
 Details: [docs/linux-ubuntu.md](docs/linux-ubuntu.md)
 

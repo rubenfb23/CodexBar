@@ -1,0 +1,140 @@
+name: Release Linux Native
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x64
+            runs-on: ubuntu-24.04
+            arch: x86_64
+          - name: linux-arm64
+            runs-on: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runs-on }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Runner info
+        run: |
+          set -euo pipefail
+          uname -a
+          uname -m
+
+      - name: Install build and runtime dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            ca-certificates \
+            gpg \
+            pkg-config \
+            xdg-utils \
+            libgtk-4-dev \
+            libadwaita-1-dev \
+            libx11-dev \
+            patchelf
+
+      - name: Install Swift 6.2.1 via swiftly
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if ! command -v gpg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ca-certificates gpg
+          fi
+
+          SWIFTLY_ARCH="$(uname -m)"
+          SWIFTLY_HOME_DIR="$HOME/.local/share/swiftly"
+          SWIFTLY_BIN_DIR="$HOME/.local/bin"
+          POST_INSTALL_SCRIPT="$(mktemp)"
+
+          mkdir -p "$SWIFTLY_BIN_DIR"
+          curl -fsSL "https://download.swift.org/swiftly/linux/swiftly-${SWIFTLY_ARCH}.tar.gz" -o /tmp/swiftly.tar.gz
+          tar -xzf /tmp/swiftly.tar.gz -C /tmp
+          /tmp/swiftly init --assume-yes --skip-install
+
+          . "$SWIFTLY_HOME_DIR/env.sh"
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+          echo "SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR" >> "$GITHUB_ENV"
+          echo "SWIFTLY_BIN_DIR=$SWIFTLY_BIN_DIR" >> "$GITHUB_ENV"
+
+          swiftly install 6.2.1 --use --assume-yes --post-install-file "$POST_INSTALL_SCRIPT"
+          if [[ -s "$POST_INSTALL_SCRIPT" ]]; then
+            sudo apt-get update
+            sudo bash "$POST_INSTALL_SCRIPT"
+          fi
+
+          hash -r
+          swift --version
+
+      - name: Build CodexBarCLI (release)
+        run: swift build -c release --product CodexBarCLI --static-swift-stdlib
+
+      - name: Build CodexBarLinux (release)
+        run: swift build -c release --product CodexBarLinux --static-swift-stdlib
+
+      - name: Package
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          TAG="${GITHUB_REF_NAME}"
+          if [[ -z "$TAG" ]]; then
+            echo "Missing tag (GITHUB_REF_NAME)." >&2
+            exit 1
+          fi
+
+          ARCH="${{ matrix.arch }}"
+
+          CLI_BIN_DIR="$(swift build -c release --product CodexBarCLI --show-bin-path)"
+          GUI_BIN_DIR="$(swift build -c release --product CodexBarLinux --show-bin-path)"
+          OUT_DIR="$(mktemp -d)"
+
+          install -m 0755 "$CLI_BIN_DIR/CodexBarCLI" "$OUT_DIR/CodexBarCLI"
+          install -m 0755 "$GUI_BIN_DIR/CodexBarLinux" "$OUT_DIR/CodexBarLinux"
+
+          # Strip build-host RPATH from the GTK4 binary so the Homebrew formula
+          # can re-apply the correct path for the user's Homebrew prefix via patchelf.
+          patchelf --remove-rpath "$OUT_DIR/CodexBarLinux"
+
+          ASSET="CodexBarLinux-${TAG}-linux-${ARCH}.tar.gz"
+          (cd "$OUT_DIR" && tar czf "$ASSET" CodexBarCLI CodexBarLinux)
+          sha256sum "$OUT_DIR/$ASSET" | cut -d' ' -f1 > "$OUT_DIR/$ASSET.sha256"
+
+          echo "out_dir=$OUT_DIR" >> "$GITHUB_OUTPUT"
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(cat $OUT_DIR/$ASSET.sha256)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload release assets
+        if: github.event_name == 'release'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          OUT_DIR="${{ steps.pkg.outputs.out_dir }}"
+          ASSET="${{ steps.pkg.outputs.asset }}"
+          gh release upload "$TAG" "$OUT_DIR/$ASSET" "$OUT_DIR/$ASSET.sha256" --clobber
+
+      - name: Upload workflow artifact (manual runs)
+        if: github.event_name != 'release'
+        uses: actions/upload-artifact@v6
+        with:
+          name: codexbar-linux-${{ matrix.name }}
+          path: |
+            ${{ steps.pkg.outputs.out_dir }}/${{ steps.pkg.outputs.asset }}
+            ${{ steps.pkg.outputs.out_dir }}/${{ steps.pkg.outputs.asset }}.sha256
