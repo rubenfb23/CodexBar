@@ -130,19 +130,25 @@ public struct LinuxProviderPreferencesRow: Sendable {
     public let enabled: Bool
     public let source: String
     public let subtitle: String
+    public let hasAPIKey: Bool
+    public let currentAPIKey: String?
 
     public init(
         provider: UsageProvider,
         displayName: String,
         enabled: Bool,
         source: String,
-        subtitle: String)
+        subtitle: String,
+        hasAPIKey: Bool = false,
+        currentAPIKey: String? = nil)
     {
         self.provider = provider
         self.displayName = displayName
         self.enabled = enabled
         self.source = source
         self.subtitle = subtitle
+        self.hasAPIKey = hasAPIKey
+        self.currentAPIKey = currentAPIKey
     }
 }
 
@@ -163,8 +169,17 @@ public enum LinuxPreferencesPresenter {
                 displayName: providerMetadata?.displayName ?? provider.rawValue.capitalized,
                 enabled: enabled,
                 source: source,
-                subtitle: subtitle)
+                subtitle: subtitle,
+                hasAPIKey: self.providerUsesAPIKey(provider),
+                currentAPIKey: providerConfig.sanitizedAPIKey)
         }
+    }
+
+    /// Returns true when the provider authenticates via an API key stored in the config.
+    public static func providerUsesAPIKey(_ provider: UsageProvider) -> Bool {
+        let dummy = ProviderConfig(id: provider, apiKey: "x")
+        let env = ProviderConfigEnvironment.applyAPIKeyOverride(base: [:], provider: provider, config: dummy)
+        return !env.isEmpty
     }
 
     public static func aboutLines() -> [String] {

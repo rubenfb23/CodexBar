@@ -251,7 +251,8 @@ public enum AntigravityStatusProbeError: LocalizedError, Sendable, Equatable {
 public struct AntigravityStatusProbe: Sendable {
     public var timeout: TimeInterval = 8.0
 
-    private static let processName = "language_server_macos"
+    // Match both "language_server_macos" (macOS) and "language_server_linux" (Linux).
+    private static let processName = "language_server"
     private static let getUserStatusPath = "/exa.language_server_pb.LanguageServerService/GetUserStatus"
     private static let commandModelConfigPath =
         "/exa.language_server_pb.LanguageServerService/GetCommandModelConfigs"

@@ -1,5 +1,10 @@
 #include "CodexBarLinuxUIBridge.h"
 
+#ifdef GDK_WINDOWING_X11
+#include <gdk/x11/gdkx.h>
+#include <X11/Xutil.h>   /* XSizeHints / USPosition */
+#endif
+
 typedef struct {
     CodexBarLinuxMainThreadCallback callback;
     void *user_data;
@@ -229,8 +234,27 @@ GtkWindow *codexbar_linux_plain_window_new(void) {
 }
 
 void codexbar_linux_plain_window_move(GtkWindow *window, int x, int y) {
-    /* gtk_window_move was removed in GTK4; positioning is compositor-controlled.
-       Callers should position via display geometry hints or startup notification. */
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *display = gdk_display_get_default();
+    if (GDK_IS_X11_DISPLAY(display)) {
+        GdkSurface *surface = gtk_native_get_surface(GTK_NATIVE(window));
+        if (surface && GDK_IS_X11_SURFACE(surface)) {
+            Display *xdisplay = gdk_x11_display_get_xdisplay(display);
+            Window xid = gdk_x11_surface_get_xid(surface);
+            /* Set USPosition so the WM honours our placement and does not
+             * apply its own centering/cascade algorithm. */
+            XSizeHints hints = {0};
+            hints.flags = USPosition;
+            hints.x = x;
+            hints.y = y;
+            XSetNormalHints(xdisplay, xid, &hints);
+            XMoveWindow(xdisplay, xid, x, y);
+            XFlush(xdisplay);
+            return;
+        }
+    }
+#endif
+    /* Wayland: positioning is compositor-controlled; no direct equivalent. */
     (void)window; (void)x; (void)y;
 }
 
@@ -250,8 +274,56 @@ void codexbar_linux_plain_window_set_child(GtkWindow *window, GtkWidget *child) 
     gtk_window_set_child(window, child);
 }
 
+void codexbar_linux_plain_window_set_default_size(GtkWindow *window, int width, int height) {
+    gtk_window_set_default_size(window, width, height);
+}
+
+int codexbar_linux_get_primary_monitor_width(void) {
+    GdkDisplay *display = gdk_display_get_default();
+    if (!display) return 1920;
+    GListModel *monitors = gdk_display_get_monitors(display);
+    guint n = g_list_model_get_n_items(monitors);
+    if (n == 0) return 1920;
+    GdkMonitor *monitor = GDK_MONITOR(g_list_model_get_item(monitors, 0));
+    GdkRectangle geom = {0};
+    gdk_monitor_get_geometry(monitor, &geom);
+    g_object_unref(monitor);
+    return geom.width;
+}
+
+void codexbar_linux_get_pointer_position(int *x, int *y) {
+    *x = 0; *y = 0;
+#ifdef GDK_WINDOWING_X11
+    GdkDisplay *display = gdk_display_get_default();
+    if (GDK_IS_X11_DISPLAY(display)) {
+        Display *xdisplay = gdk_x11_display_get_xdisplay(display);
+        Window root = DefaultRootWindow(xdisplay);
+        Window root_ret, child_ret;
+        int wx = 0, wy = 0;
+        unsigned int mask = 0;
+        XQueryPointer(xdisplay, root, &root_ret, &child_ret, x, y, &wx, &wy, &mask);
+    }
+#endif
+}
+
 void codexbar_linux_window_set_decorated(GtkWindow *window, gboolean decorated) {
     gtk_window_set_decorated(window, decorated);
+}
+
+void codexbar_linux_window_hide(AdwApplicationWindow *window) {
+    gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+}
+
+/* Connect close-request so the WM/keyboard close hides rather than destroys */
+static gboolean codexbar_linux_on_close_hide(GtkWindow *window, gpointer user_data) {
+    (void)user_data;
+    gtk_widget_set_visible(GTK_WIDGET(window), FALSE);
+    return TRUE; /* TRUE = suppress default destroy */
+}
+
+void codexbar_linux_window_connect_close_hide(AdwApplicationWindow *window) {
+    g_signal_connect(window, "close-request",
+                     G_CALLBACK(codexbar_linux_on_close_hide), NULL);
 }
 
 void codexbar_linux_window_set_skip_taskbar(GtkWindow *window, gboolean skip) {
@@ -264,6 +336,10 @@ void codexbar_linux_window_set_keep_above(GtkWindow *window, gboolean keep_above
     /* gtk_window_set_keep_above was removed in GTK4; no direct replacement.
        Always-on-top is now a compositor-level policy outside GTK's control. */
     (void)window; (void)keep_above;
+}
+
+void codexbar_linux_widget_realize(GtkWidget *widget) {
+    gtk_widget_realize(widget);
 }
 
 void codexbar_linux_widget_set_visible(GtkWidget *widget, gboolean visible) {
@@ -304,4 +380,55 @@ GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int siz
     GtkWidget *image = gtk_image_new_from_resource(resource_path);
     gtk_image_set_pixel_size(GTK_IMAGE(image), size);
     return image;
+}
+
+typedef struct {
+    CodexBarLinuxWindowFocusCallback callback;
+    void *user_data;
+} WindowFocusData;
+
+static void on_notify_is_active(GObject *obj, GParamSpec *pspec, gpointer user_data) {
+    (void)pspec;
+    if (!gtk_window_is_active(GTK_WINDOW(obj))) {
+        WindowFocusData *data = user_data;
+        data->callback(data->user_data);
+    }
+}
+
+void codexbar_linux_window_on_deactivate(
+    GtkWindow *window,
+    CodexBarLinuxWindowFocusCallback callback,
+    void *user_data)
+{
+    WindowFocusData *data = g_new0(WindowFocusData, 1);
+    data->callback = callback;
+    data->user_data = user_data;
+    g_signal_connect_data(
+        window, "notify::is-active",
+        G_CALLBACK(on_notify_is_active),
+        data, (GClosureNotify)g_free, 0);
+}
+
+GtkWidget *codexbar_linux_entry_new(const char *placeholder) {
+    GtkWidget *entry = gtk_entry_new();
+    if (placeholder && *placeholder) {
+        gtk_entry_set_placeholder_text(GTK_ENTRY(entry), placeholder);
+    }
+    return entry;
+}
+
+void codexbar_linux_entry_set_text(GtkWidget *entry, const char *text) {
+    gtk_editable_set_text(GTK_EDITABLE(entry), text ? text : "");
+}
+
+const char *codexbar_linux_entry_get_text(GtkWidget *entry) {
+    return gtk_editable_get_text(GTK_EDITABLE(entry));
+}
+
+void codexbar_linux_entry_set_visibility(GtkWidget *entry, gboolean visible) {
+    gtk_entry_set_visibility(GTK_ENTRY(entry), visible);
+}
+
+void codexbar_linux_entry_on_activate(GtkWidget *entry, CodexBarLinuxWidgetCallback callback, void *user_data) {
+    g_signal_connect_data(entry, "activate", G_CALLBACK(callback), user_data, NULL, 0);
 }

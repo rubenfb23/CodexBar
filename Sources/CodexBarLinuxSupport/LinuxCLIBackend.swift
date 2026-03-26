@@ -118,10 +118,15 @@ public struct LinuxCLIBackend: Sendable {
             var chosenStderr = ""
             var chosenExitCode: Int32 = 0
 
+            let providerEnv = ProviderConfigEnvironment.applyAPIKeyOverride(
+                base: self.environment,
+                provider: provider,
+                config: config.providerConfig(for: provider))
             for sourceMode in sourceAttempts {
                 let command = try self.runProcess(
                     executablePath: cliBinaryPath,
                     arguments: Self.usageArguments(for: provider, sourceMode: sourceMode),
+                    environment: providerEnv,
                     label: "CodexBar Linux refresh (\(provider.rawValue), \(sourceMode.rawValue))",
                     timeout: self.processTimeoutSeconds())
                 let trimmed = command.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -195,6 +200,7 @@ public struct LinuxCLIBackend: Sendable {
         let command = try self.runProcess(
             executablePath: opener,
             arguments: [fileURL.path],
+            environment: self.environment,
             label: "Open CodexBar config",
             timeout: 5)
         if command.exitCode != 0 {
@@ -230,6 +236,15 @@ public struct LinuxCLIBackend: Sendable {
 
     public func savePreferences(_ preferences: LinuxPreferences) throws {
         try self.preferencesStore.save(preferences)
+    }
+
+    public func setProviderAPIKey(_ provider: UsageProvider, apiKey: String?) throws {
+        var config = try self.loadConfig()
+        var providerConfig = config.providerConfig(for: provider) ?? ProviderConfig(id: provider)
+        let trimmed = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines)
+        providerConfig.apiKey = (trimmed == nil || trimmed!.isEmpty) ? nil : trimmed
+        config.setProviderConfig(providerConfig)
+        try self.configStore.save(config.normalized())
     }
 
     static func decodePayloadsFromCLIStdout(_ stdout: String) throws -> [LinuxProviderPayload] {
@@ -428,13 +443,14 @@ public struct LinuxCLIBackend: Sendable {
     private func runProcess(
         executablePath: String,
         arguments: [String],
+        environment: [String: String],
         label: String,
         timeout: TimeInterval) throws -> (stdout: String, stderr: String, exitCode: Int32)
     {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executablePath)
         process.arguments = arguments
-        process.environment = self.environment
+        process.environment = environment
 
         let stdoutPipe = Pipe()
         let stderrPipe = Pipe()

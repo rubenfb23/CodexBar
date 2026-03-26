@@ -96,6 +96,10 @@ let package = Package(
                 publicHeadersPath: "include",
                 cSettings: [
                     .headerSearchPath("include"),
+                ],
+                linkerSettings: [
+                    // XMoveWindow / XFlush used in bridge.c for X11 window positioning
+                    .linkedLibrary("X11"),
                 ]),
             .executableTarget(
                 name: "CodexBarLinux",

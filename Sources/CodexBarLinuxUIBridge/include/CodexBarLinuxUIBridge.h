@@ -24,6 +24,9 @@ void codexbar_linux_window_set_title(AdwApplicationWindow *window, const char *t
 void codexbar_linux_window_set_default_size(AdwApplicationWindow *window, int width, int height);
 void codexbar_linux_window_set_content(AdwApplicationWindow *window, GtkWidget *child);
 void codexbar_linux_window_present(AdwApplicationWindow *window);
+void codexbar_linux_window_hide(AdwApplicationWindow *window);
+/* Connect a close-request handler that hides the window instead of destroying it. */
+void codexbar_linux_window_connect_close_hide(AdwApplicationWindow *window);
 
 GtkWidget *codexbar_linux_box_new_vertical(int spacing);
 GtkWidget *codexbar_linux_box_new_horizontal(int spacing);
@@ -95,9 +98,23 @@ void codexbar_linux_window_set_keep_above(GtkWindow *window, gboolean keep_above
 /* Set the root child of a plain GtkWindow (equivalent to adw_application_window_set_content) */
 void codexbar_linux_plain_window_set_child(GtkWindow *window, GtkWidget *child);
 
+/* Realize a widget (creates its GDK surface) without showing it.
+   Call this before codexbar_linux_plain_window_move on X11. */
+void codexbar_linux_widget_realize(GtkWidget *widget);
+
 /* Widget visibility — used to toggle the popup window */
 void codexbar_linux_widget_set_visible(GtkWidget *widget, gboolean visible);
 gboolean codexbar_linux_widget_get_visible(GtkWidget *widget);
+
+/* Callback invoked when a window loses focus/active state */
+typedef void (*CodexBarLinuxWindowFocusCallback)(void *user_data);
+
+/* Register a callback that fires once (and repeatedly) whenever the window
+   transitions from active → inactive. Use to auto-hide popup windows. */
+void codexbar_linux_window_on_deactivate(
+    GtkWindow *window,
+    CodexBarLinuxWindowFocusCallback callback,
+    void *user_data);
 
 /* Apply an inline background color (valid CSS color, e.g. "#CC785C") and border-radius to a widget.
    Registers a display-scoped GtkCssProvider keyed by a unique widget name selector.
@@ -106,3 +123,22 @@ void codexbar_linux_widget_set_background_color(GtkWidget *widget, const char *c
 
 /* Icon loaded from a GResource path at the given pixel size */
 GtkWidget *codexbar_linux_image_from_resource(const char *resource_path, int size);
+
+void codexbar_linux_plain_window_set_default_size(GtkWindow *window, int width, int height);
+
+/* Returns the width of the primary monitor in logical pixels (fallback 1920). */
+int codexbar_linux_get_primary_monitor_width(void);
+
+/* Returns the current pointer (cursor) position in screen coordinates.
+   On Wayland returns (0,0) — compositor does not expose pointer position. */
+void codexbar_linux_get_pointer_position(int *x, int *y);
+
+/* Single-line text entry (GtkEntry) */
+GtkWidget *codexbar_linux_entry_new(const char *placeholder);
+void codexbar_linux_entry_set_text(GtkWidget *entry, const char *text);
+/* Returns a pointer owned by the widget; copy immediately before the widget is modified. */
+const char *codexbar_linux_entry_get_text(GtkWidget *entry);
+/* Pass FALSE to hide text (password mode). */
+void codexbar_linux_entry_set_visibility(GtkWidget *entry, gboolean visible);
+/* Fires when the user presses Enter inside the entry. */
+void codexbar_linux_entry_on_activate(GtkWidget *entry, CodexBarLinuxWidgetCallback callback, void *user_data);

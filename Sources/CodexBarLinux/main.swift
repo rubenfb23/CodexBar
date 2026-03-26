@@ -21,6 +21,10 @@ private func requireValue<T>(_ value: T?, _ message: String) -> T {
 @main
 enum CodexBarLinuxApp {
     static func main() {
+        // Force X11 backend (XWayland) so that popup windows can be positioned
+        // at arbitrary screen coordinates via XMoveWindow. On the native Wayland
+        // backend GTK4 has no API for explicit window placement.
+        setenv("GDK_BACKEND", "x11", 1)
         codexbar_linux_init()
         let controller = LinuxWindowController()
         controller.run()
@@ -42,7 +46,14 @@ private func codexbarLinuxSNIActivateCallback(_ x: Int32, _ y: Int32, _ userData
 private func codexbarLinuxSNIContextMenuCallback(_ x: Int32, _ y: Int32, _ userData: UnsafeMutableRawPointer?) {
     guard let userData else { return }
     let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
-    controller.showContextMenu(x: Int(x), y: Int(y))
+    // Store last tray position for use by the DBusMenu "Show / Hide" item.
+    controller.storeTrayPosition(x: Int(x), y: Int(y))
+}
+
+private func codexbarLinuxSNIMenuCallback(_ itemId: Int32, _ x: Int32, _ y: Int32, _ userData: UnsafeMutableRawPointer?) {
+    guard let userData else { return }
+    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
+    controller.handleMenuAction(itemId: Int(itemId), x: Int(x), y: Int(y))
 }
 
 private func codexbarLinuxWidgetCallback(_ widget: LinuxWidgetPtr?, _ userData: UnsafeMutableRawPointer?) {
@@ -62,6 +73,12 @@ private func codexbarLinuxTimeoutCallback(_ userData: UnsafeMutableRawPointer?) 
     let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
     controller.handleRefreshTimerFired()
     return 1
+}
+
+private func codexbarLinuxPopupDeactivatedCallback(_ userData: UnsafeMutableRawPointer?) {
+    guard let userData else { return }
+    let controller = Unmanaged<LinuxWindowController>.fromOpaque(userData).takeUnretainedValue()
+    controller.hidePopup()
 }
 
 private final class LinuxWidgetHandlerBox {
@@ -102,6 +119,8 @@ private final class LinuxWindowController: @unchecked Sendable {
     // Preferences window (the existing full tabbed window — built lazily)
     private var preferencesWindow: LinuxWindowPtr?
     private var sniRegistered = false
+    private var lastTrayX = 0
+    private var lastTrayY = 0
 
     init() {
         self.preferences = self.backend.loadPreferences()
@@ -128,7 +147,7 @@ private final class LinuxWindowController: @unchecked Sendable {
         // Register SNI tray icon (once)
         if !self.sniRegistered {
             var sniError: UnsafeMutablePointer<GError>? = nil
-            let registered = "utilities-system-monitor".withCString { iconName in
+            let registered = "codexbar".withCString { iconName in
                 codexbar_linux_sni_register(
                     iconName,
                     codexbarLinuxSNIActivateCallback,
@@ -138,6 +157,7 @@ private final class LinuxWindowController: @unchecked Sendable {
             }
             if registered != 0 {
                 self.sniRegistered = true
+                codexbar_linux_sni_set_menu_callback(codexbarLinuxSNIMenuCallback)
                 // Prevent GLib from auto-quitting when there are no windows (tray-only mode).
                 codexbar_linux_application_hold(application)
             } else {
@@ -307,6 +327,15 @@ private final class LinuxWindowController: @unchecked Sendable {
         self.refresh()
     }
 
+    private func setProviderAPIKey(_ provider: UsageProvider, apiKey: String?) {
+        do {
+            try self.backend.setProviderAPIKey(provider, apiKey: apiKey)
+        } catch {
+            self.renderRefreshError(error.localizedDescription)
+        }
+        self.refresh()
+    }
+
     private func buildPreferencesWindow(application: LinuxAppPtr) {
         let window = requireValue(codexbar_linux_window_new(application), "Failed to create application window.")
         self.preferencesWindow = window
@@ -334,11 +363,19 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_box_append(root, subtitleLabel)
 
         let toolbar = requireValue(codexbar_linux_box_new_horizontal(12), "Failed to create toolbar.")
-        codexbar_linux_box_append(toolbar, self.makeButton(title: "Refresh") { [weak self] _ in
+        codexbar_linux_box_append(toolbar, self.makeButton(title: "↻ Refresh") { [weak self] _ in
             self?.refresh()
         })
         codexbar_linux_box_append(toolbar, self.makeButton(title: "Open Config") { [weak self] _ in
             self?.openConfig()
+        })
+        // Spacer pushes Close button to the right
+        let toolbarSpacer = requireValue(codexbar_linux_box_new_horizontal(0), "spacer")
+        codexbar_linux_widget_set_hexpand(toolbarSpacer, 1)
+        codexbar_linux_box_append(toolbar, toolbarSpacer)
+        codexbar_linux_box_append(toolbar, self.makeButton(title: "✕ Close") { [weak self] _ in
+            guard let self, let win = self.preferencesWindow else { return }
+            codexbar_linux_window_hide(win)
         })
         codexbar_linux_box_append(root, toolbar)
 
@@ -370,6 +407,8 @@ private final class LinuxWindowController: @unchecked Sendable {
         codexbar_linux_box_append(root, stack)
 
         codexbar_linux_window_set_content(window, root)
+        // Hide (not destroy) when the WM close button or keyboard shortcut fires
+        codexbar_linux_window_connect_close_hide(window)
     }
 
     private func buildAndHidePopup() {
@@ -378,6 +417,7 @@ private final class LinuxWindowController: @unchecked Sendable {
             "Failed to create popup window.")
         self.popupWindow = popupWindow
 
+        codexbar_linux_plain_window_set_default_size(popupWindow, 320, 420)
         codexbar_linux_window_set_keep_above(popupWindow, 1)
         codexbar_linux_window_set_skip_taskbar(popupWindow, 1)
 
@@ -421,6 +461,9 @@ private final class LinuxWindowController: @unchecked Sendable {
             self?.refresh()
         })
         codexbar_linux_box_append(footer, self.makeButton(title: "✕") { [weak self] _ in
+            self?.hidePopup()
+        })
+        codexbar_linux_box_append(footer, self.makeButton(title: "⏻") { [weak self] _ in
             guard let self, let application = self.application else { return }
             g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
         })
@@ -430,15 +473,55 @@ private final class LinuxWindowController: @unchecked Sendable {
         // Hide immediately — will be shown when tray icon is clicked
         let popupWidget = UnsafeMutablePointer<GtkWidget>(OpaquePointer(popupWindow))
         codexbar_linux_widget_set_visible(popupWidget, 0)
+
+        // Auto-hide the popup whenever it loses focus (click outside, alt-tab, etc.)
+        if let retainedPointer = self.retainedPointer {
+            codexbar_linux_window_on_deactivate(
+                popupWindow,
+                codexbarLinuxPopupDeactivatedCallback,
+                retainedPointer)
+        }
     }
 
     private func showPreferences() {
         guard let application else { return }
-        if self.preferencesWindow == nil {
+        let isNew = self.preferencesWindow == nil
+        if isNew {
             self.buildPreferencesWindow(application: application)
         }
         if let preferencesWindow = self.preferencesWindow {
             codexbar_linux_window_present(preferencesWindow)
+        }
+        // On first open the boxes were nil during the initial refresh, so the tabs
+        // are empty. Trigger a fresh load now that the boxes exist.
+        if isNew {
+            self.refresh()
+        }
+    }
+
+    func hidePopup() {
+        guard let popupWindow else { return }
+        codexbar_linux_plain_window_hide(popupWindow)
+    }
+
+    func storeTrayPosition(x: Int, y: Int) {
+        self.lastTrayX = x
+        self.lastTrayY = y
+    }
+
+    func handleMenuAction(itemId: Int, x: Int = 0, y: Int = 0) {
+        switch itemId {
+        case -1: // AboutToShow — single click on tray icon
+            togglePopup(x: x, y: y)
+        case 3:  // Refresh
+            refresh()
+        case 4:  // Preferences
+            showPreferences()
+        case 6:  // Quit
+            guard let application else { return }
+            g_application_quit(UnsafeMutablePointer<GApplication>(OpaquePointer(application)))
+        default:
+            break
         }
     }
 
@@ -449,7 +532,28 @@ private final class LinuxWindowController: @unchecked Sendable {
         if isVisible {
             codexbar_linux_plain_window_hide(popupWindow)
         } else {
-            codexbar_linux_plain_window_move(popupWindow, Int32(x - 280), Int32(y + 4))
+            // Realize first so the GDK surface exists for X11 positioning.
+            codexbar_linux_widget_realize(popupWidget)
+
+            let popupWidth = 320
+            // Ubuntu GNOME panel is 32px tall. Tray icons are always in the top panel.
+            let panelHeight = 32
+
+            let anchorX: Int
+            let anchorY: Int
+
+            if x > 0 || y > 0 {
+                // X11: cursor position known — center popup under cursor, just below panel.
+                anchorX = max(0, x - popupWidth / 2)
+                anchorY = max(panelHeight, y) + 4
+            } else {
+                // Wayland / no cursor info: place popup at top-right (where GNOME tray is).
+                let screenWidth = Int(codexbar_linux_get_primary_monitor_width())
+                anchorX = screenWidth - popupWidth - 8
+                anchorY = panelHeight + 4
+            }
+
+            codexbar_linux_plain_window_move(popupWindow, Int32(anchorX), Int32(anchorY))
             codexbar_linux_plain_window_present(popupWindow)
         }
     }
@@ -672,6 +776,44 @@ private final class LinuxWindowController: @unchecked Sendable {
                 wrap: false,
                 cssClasses: [])
             codexbar_linux_box_append(content, source)
+
+            if row.hasAPIKey {
+                let apiRow = requireValue(codexbar_linux_box_new_horizontal(8), "api token row")
+                codexbar_linux_widget_set_hexpand(apiRow, 1)
+
+                let apiLabel = self.makeLabel(text: "API Token:", xalign: 0, wrap: false, cssClasses: [])
+                codexbar_linux_box_append(apiRow, apiLabel)
+
+                let entry = requireValue(
+                    "Paste token here".withCString { codexbar_linux_entry_new($0) },
+                    "api token entry")
+                codexbar_linux_entry_set_visibility(entry, 0)
+                codexbar_linux_widget_set_hexpand(entry, 1)
+                codexbar_linux_box_append(apiRow, entry)
+
+                let saveButton = self.makeButton(title: "Save") { [weak self, entry] _ in
+                    guard let self else { return }
+                    let text: String
+                    if let cStr = codexbar_linux_entry_get_text(entry) {
+                        text = String(cString: cStr)
+                    } else {
+                        text = ""
+                    }
+                    self.setProviderAPIKey(row.provider, apiKey: text.isEmpty ? nil : text)
+                }
+                codexbar_linux_box_append(apiRow, saveButton)
+                codexbar_linux_box_append(content, apiRow)
+
+                let tokenStatus = row.currentAPIKey != nil
+                    ? "Token configured ✓"
+                    : "No token — paste above and Save"
+                let statusLabel = self.makeLabel(
+                    text: tokenStatus,
+                    xalign: 0,
+                    wrap: false,
+                    cssClasses: row.currentAPIKey != nil ? ["success"] : ["dim-label"])
+                codexbar_linux_box_append(content, statusLabel)
+            }
 
             if let card = cardsByProvider[row.provider.rawValue] {
                 let status = self.makeLabel(text: card.statusLine, xalign: 0, wrap: true, cssClasses: [])
