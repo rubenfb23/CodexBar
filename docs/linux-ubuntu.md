@@ -1,23 +1,26 @@
 ---
-summary: "Build and run the native Ubuntu window for CodexBar."
+summary: "Build and run the native Ubuntu tray app for CodexBar."
 read_when:
   - Building the Linux GUI from source
   - Installing GTK/libadwaita dependencies on Ubuntu
+  - Configuring provider tokens on Linux
 ---
 
 # Native Ubuntu app
 
-CodexBar now has a native Ubuntu window target named `CodexBarLinux`.
+CodexBar has a native Ubuntu tray target named `CodexBarLinux`.
 
-This is not a direct port of the macOS menu bar app. The Linux app is a separate GTK4/libadwaita frontend that reads the existing `CodexBarCLI` JSON output and renders provider cards in a native desktop window.
+This is not a direct port of the macOS menu bar app. The Linux app is a separate GTK4/libadwaita frontend that reads the existing `CodexBarCLI` JSON output and renders provider cards in a native desktop window. It integrates with the system tray via the StatusNotifierItem (SNI) D-Bus protocol.
 
 ## Requirements
 
 - Ubuntu 24.04 or newer
 - `libgtk-4-dev`
 - `libadwaita-1-dev`
+- `libx11-dev` (used for XWayland popup positioning)
 - `xdg-utils`
 - Swift 6.2.1 or newer
+- GNOME Shell with the [AppIndicator/KStatusNotifierItem](https://extensions.gnome.org/extension/615/appindicator-support/) extension (for the tray icon)
 
 ## Install and run
 
@@ -30,17 +33,18 @@ codexbar-linux
 
 The installer will:
 
-- install the GTK/libadwaita build dependencies with `apt`
+- install the GTK/libadwaita/X11 build dependencies with `apt`
 - bootstrap Swift with Swiftly if `swift` is missing
 - build `CodexBarCLI` and `CodexBarLinux`
 - install symlinks into `~/.local/bin`
+- copy the CodexBar icon to `~/.local/share/icons/hicolor/` at sizes 22–256 px
 - add a desktop entry at `~/.local/share/applications/com.steipete.codexbar.linux.desktop`
 
 ## Manual build
 
 ```bash
 sudo apt-get update
-sudo apt-get install -y pkg-config xdg-utils libgtk-4-dev libadwaita-1-dev
+sudo apt-get install -y pkg-config xdg-utils libgtk-4-dev libadwaita-1-dev libx11-dev
 swift build -c release --product CodexBarCLI
 swift build -c release --product CodexBarLinux
 .build/release/CodexBarLinux
@@ -52,18 +56,81 @@ If `CodexBarLinux` cannot find the CLI automatically, point it at the binary exp
 CODEXBAR_LINUX_CLI_BINARY="$(pwd)/.build/release/CodexBarCLI" .build/release/CodexBarLinux
 ```
 
+## Tray icon
+
+The app registers a StatusNotifierItem (SNI) on the session D-Bus. Requires the GNOME Shell **AppIndicator** extension to be enabled.
+
+- **Single click** on the tray icon opens/closes the compact popup window directly below the icon.
+- The tray icon uses the embedded CodexBar logo via SNI `IconPixmap` (no icon-theme dependency).
+- The app forces `GDK_BACKEND=x11` (XWayland) so the popup window can be precisely positioned with `XMoveWindow`.
+
+### Context menu
+
+Right-click the tray icon to open a context menu:
+
+| Item | Action |
+|------|--------|
+| Show / Hide | Toggle the popup |
+| Refresh | Force a fresh fetch of all providers |
+| Preferences | Open the settings window |
+| Quit | Exit CodexBar |
+
+## Preferences window
+
+Open via the ⚙ button in the popup footer or via the tray context menu.
+
+| Tab | Contents |
+|-----|----------|
+| Overview | Full provider cards with usage bars |
+| Providers | Toggle providers, configure API tokens |
+| General | Refresh cadence, usage options |
+| Display | Bar direction, personal info redaction |
+| About | Build paths, description |
+
+### Configuring provider API tokens
+
+Some providers authenticate via an API token (Copilot, OpenRouter, Zai, …). On macOS these are stored in the Keychain. On Linux they are stored in `~/.codexbar/config.json` under `providers[].apiKey`.
+
+To configure a token in the UI:
+
+1. Open **Preferences → Providers**
+2. Find the provider section (e.g. "Copilot")
+3. Paste the token into the **API Token** field and click **Save**
+4. Refresh — the provider should now show usage data
+
+Alternatively edit `~/.codexbar/config.json` directly:
+
+```json
+{
+  "providers": [
+    { "id": "copilot", "enabled": true, "apiKey": "ghu_your_token_here" }
+  ]
+}
+```
+
+#### Copilot token
+
+Get a GitHub OAuth token with the `copilot` scope:
+
+```bash
+gh auth token        # if you have the GitHub CLI and are already signed in
+```
+
+Or create a Personal Access Token at **GitHub → Settings → Developer settings → Personal access tokens** with `copilot` scope, then paste it in the Providers tab.
+
 ## Current scope
 
-- native GNOME/libadwaita window
-- overview page with provider cards rendered from `codexbar usage --format json`
-- providers page that writes provider enablement back to `~/.codexbar/config.json`
-- general/display/about pages with Linux-side persisted preferences
-- manual refresh
-- open config button via `xdg-open`
+- SystemTray icon via SNI D-Bus protocol (requires AppIndicator GNOME Shell extension)
+- Single-click popup window positioned below tray icon
+- Overview page with provider cards rendered from `codexbar usage --format json`
+- Providers page: toggle enablement, configure API tokens
+- General/display/about pages with Linux-side persisted preferences
+- Auto-refresh (configurable cadence)
+- Manual refresh
+- Open config button via `xdg-open`
 
-Not implemented yet:
+## Not implemented yet
 
-- tray/AppIndicator integration
-- autostart
-- notifications
-- parity with the macOS menu bar UI
+- Autostart / launch-at-login
+- Desktop notifications
+- Full parity with the macOS menu bar (merged view, history charts, etc.)

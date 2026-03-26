@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Linux (feat/ubuntu-native)
+
+- **Tray icon** — implement `com.canonical.dbusmenu` interface so the GNOME Shell AppIndicator extension can call the SNI item; intercept `AboutToShow` as a single-click signal so one click opens/closes the popup.
+- **Popup positioning** — force `GDK_BACKEND=x11` (XWayland) and use `XMoveWindow` + `USPosition` hint to place the popup window directly below the tray icon.
+- **CodexBar logo in tray** — embed the app icon via SNI `IconPixmap` (raw ARGB32 from the installed PNG) so theme lookup is not needed.
+- **Context menu** — Show/Hide, Refresh, Preferences, Quit entries via DBusMenu.
+- **Preferences window** — fix empty tabs on first open; add ✕ Close button; wire close-request to hide instead of destroy.
+- **Antigravity on Linux** — broaden process-name filter from `language_server_macos` to `language_server` so the Linux binary (`language_server_linux`) is detected correctly.
+- **Provider API key UI** — add a password-style token field + Save button per provider in the Providers tab; inject stored `apiKey` values from config into CLI subprocess environment via `ProviderConfigEnvironment.applyAPIKeyOverride` (fixes Copilot "no available fetch strategy").
+
 ## 0.19.0 — 2026-03-23
 ### Highlights
 - Add Alibaba Coding Plan provider with region-aware quota fetching, widget integration, and browser-cookie import defaults (#574).

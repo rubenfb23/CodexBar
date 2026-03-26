@@ -36,6 +36,18 @@ Copilot uses GitHub OAuth device flow and the Copilot internal usage API. No bro
 - Reset dates are not provided by the API.
 - Plan label from `copilotPlan`.
 
+## Linux token setup
+
+On macOS the token is stored in Keychain. On Linux it lives in `~/.codexbar/config.json`.
+
+To configure via the UI: **Preferences → Providers → Copilot → API Token field → Save**.
+
+To get the token:
+```bash
+gh auth token   # GitHub CLI — already signed in
+```
+Or create a PAT at GitHub → Settings → Developer settings → Personal access tokens with `copilot` scope.
+
 ## Key files
 - `Sources/CodexBarCore/Providers/Copilot/CopilotUsageFetcher.swift`
 - `Sources/CodexBarCore/Providers/Copilot/CopilotDeviceFlow.swift`

@@ -14,7 +14,8 @@ Antigravity is a local-only provider. We talk directly to the Antigravity langua
 
 1) **Process detection**
    - Command: `ps -ax -o pid=,command=`.
-   - Match process name: `language_server_macos` plus Antigravity markers:
+   - Match process name prefix `language_server` (covers `language_server_macos` on macOS and
+     `language_server_linux` on Linux) plus Antigravity markers:
      - `--app_data_dir antigravity` OR path contains `/antigravity/`.
    - Extract CLI flags:
      - `--csrf_token <token>` (required).
