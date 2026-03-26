@@ -1,15 +1,74 @@
 name: Release Linux Native
 
+# Triggered exclusively by linux-v* tags pushed to this fork.
+# Creates and publishes the GitHub Release automatically — no manual release needed.
+#
+# To release:
+#   git tag linux-v0.1.0
+#   git push rubenfb23 linux-v0.1.0
+
 on:
-  release:
-    types: [published]
+  push:
+    tags:
+      - 'linux-v*'
   workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
+  create-release:
+    runs-on: ubuntu-24.04
+    # Only create the release once (not once per arch matrix job).
+    if: github.event_name == 'push'
+    outputs:
+      tag: ${{ steps.info.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Parse tag info
+        id: info
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#linux-v}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#linux-v}"
+          gh release create "$TAG" \
+            --title "CodexBar Linux $VERSION" \
+            --notes "Pre-built Linux binaries for \`CodexBarLinux\` and \`CodexBarCLI\`.
+
+## Install via Homebrew
+
+\`\`\`bash
+brew tap rubenfb23/codexbar
+brew install codexbar-linux
+\`\`\`
+
+## Manual install
+
+Download the \`.tar.gz\` for your architecture below, extract, and place the binaries in your \`PATH\`.
+
+\`\`\`bash
+tar -xzf CodexBarLinux-${TAG}-linux-x86_64.tar.gz
+sudo install -m 0755 CodexBarLinux /usr/local/bin/
+sudo install -m 0755 CodexBarCLI /usr/local/bin/
+\`\`\`
+
+Requires [AppIndicator GNOME Shell extension](https://extensions.gnome.org/extension/615/appindicator-support/) for the tray icon." \
+            --latest
+
   build:
+    needs: [create-release]
+    if: always() && (needs.create-release.result == 'success' || github.event_name == 'workflow_dispatch')
     strategy:
       fail-fast: false
       matrix:
@@ -92,11 +151,6 @@ jobs:
           set -euo pipefail
 
           TAG="${GITHUB_REF_NAME}"
-          if [[ -z "$TAG" ]]; then
-            echo "Missing tag (GITHUB_REF_NAME)." >&2
-            exit 1
-          fi
-
           ARCH="${{ matrix.arch }}"
 
           CLI_BIN_DIR="$(swift build -c release --product CodexBarCLI --show-bin-path)"
@@ -106,8 +160,8 @@ jobs:
           install -m 0755 "$CLI_BIN_DIR/CodexBarCLI" "$OUT_DIR/CodexBarCLI"
           install -m 0755 "$GUI_BIN_DIR/CodexBarLinux" "$OUT_DIR/CodexBarLinux"
 
-          # Strip build-host RPATH from the GTK4 binary so the Homebrew formula
-          # can re-apply the correct path for the user's Homebrew prefix via patchelf.
+          # Strip build-host RPATH so the Homebrew formula can re-apply the
+          # correct path for the user's Homebrew prefix via patchelf.
           patchelf --remove-rpath "$OUT_DIR/CodexBarLinux"
 
           ASSET="CodexBarLinux-${TAG}-linux-${ARCH}.tar.gz"
@@ -119,7 +173,7 @@ jobs:
           echo "sha256=$(cat $OUT_DIR/$ASSET.sha256)" >> "$GITHUB_OUTPUT"
 
       - name: Upload release assets
-        if: github.event_name == 'release'
+        if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
@@ -131,7 +185,7 @@ jobs:
           gh release upload "$TAG" "$OUT_DIR/$ASSET" "$OUT_DIR/$ASSET.sha256" --clobber
 
       - name: Upload workflow artifact (manual runs)
-        if: github.event_name != 'release'
+        if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v6
         with:
           name: codexbar-linux-${{ matrix.name }}
