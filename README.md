@@ -2,7 +2,8 @@
 
 Tiny macOS 14+ menu bar app that keeps your Codex, Claude, Cursor, Gemini, Antigravity, Droid (Factory), Copilot, z.ai, Kiro, Vertex AI, Augment, Amp, JetBrains AI, and OpenRouter limits visible (session + weekly where available) and shows when each window resets. One status item per provider (or Merge Icons mode with a provider switcher and optional Overview tab); enable what you use from Settings. No Dock icon, minimal UI, dynamic bar icons in the menu bar.
 
-<img src="codexbar.png" alt="CodexBar menu screenshot" width="520" />
+<img width="353" height="463" alt="image" src="https://github.com/user-attachments/assets/a0936e3f-f17d-40fa-8011-594fdd57c48b" />
+
 
 ## Install
 
